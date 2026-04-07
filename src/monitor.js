@@ -61,6 +61,19 @@ class TokenMonitor extends EventEmitter {
     this._scheduleNextPoll();
     logger.info('[Monitor] 启动 | 轮询=%ds K线=%ds DRY_RUN=%s HeliusWS=%s',
       POLL_SEC, KLINE_SEC, DRY_RUN, heliusWs.isConnected() ? '已连接' : '连接中');
+
+    if (!DRY_RUN) {
+      const hasWallet = !!process.env.WALLET_PRIVATE_KEY;
+      const hasJupKey = !!process.env.JUPITER_API_KEY;
+      const hasHelius = !!(process.env.HELIUS_WSS_URL || process.env.HELIUS_API_KEY || process.env.HELIUS_RPC_URL);
+      logger.info('[Monitor] 实盘检查 | 钱包=%s  JupiterKey=%s  Helius量能=%s',
+        hasWallet ? '✅已配置' : '❌未配置(必填)',
+        hasJupKey ? '✅已配置' : '⚠️未配置(可能失败)',
+        hasHelius ? '✅已配置' : '⚠️未配置(量能退化为VOL_OFF)');
+      if (!hasWallet) {
+        logger.error('[Monitor] ❌ 实盘模式必须配置 WALLET_PRIVATE_KEY，否则无法成交！');
+      }
+    }
   }
 
   stop() {
@@ -361,7 +374,9 @@ class TokenMonitor extends EventEmitter {
         logger.info('[Monitor] ✅ BUY 成功 %s  solIn=%.4f SOL  txid=%s', state.symbol, result.solIn, result.txid);
       } catch (err) {
         logger.error('[Monitor] ❌ BUY 失败 %s: %s', state.symbol, err.message);
+        logger.error('[Monitor]    请检查: WALLET_PRIVATE_KEY / JUPITER_API_KEY / 钱包余额');
         state.inPosition = false;
+        state._lastBuyCandle = -1;  // 允许下根K线重新尝试
       }
     }
   }
@@ -389,12 +404,16 @@ class TokenMonitor extends EventEmitter {
       const pnlSol = solOut - solIn;
 
       state.inPosition = false;
-      this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, reason, txid: `DRY_${Date.now()}`, solOut, pnlSol, dryRun: true });
-      this._finalizeTradeRecord(state, reason, solOut, pnlPct);
+      this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, price: currentPrice, reason,
+        txid: `DRY_${Date.now()}`, solIn, solOut, pnlSol, dryRun: true });
+      this._finalizeTradeRecord(state, reason, solOut, pnlPct, currentPrice);
 
       logger.info('[Monitor] ✅ DRY_RUN SELL %s  solIn=%.4f  solOut=%.4f  pnl=%+.4f SOL (%+.1f%%)',
         state.symbol, solIn, solOut, pnlSol, pnlPct);
     } else {
+      let realtimeSellPrice = state.ticks.length > 0
+        ? state.ticks[state.ticks.length - 1].price
+        : state.position?.entryPriceUsd || 0;
       try {
         const result = await trader.sell(state.address, state.symbol, state.position);
         const solOut  = result.solOut ?? 0;
@@ -403,8 +422,9 @@ class TokenMonitor extends EventEmitter {
         const pnlSol  = solOut - solIn;
 
         state.inPosition = false;
-        this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, reason, txid: result.txid, solOut, pnlSol });
-        this._finalizeTradeRecord(state, reason, solOut, pnlPct);
+        this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, price: realtimeSellPrice,
+          reason, txid: result.txid, solIn, solOut, pnlSol });
+        this._finalizeTradeRecord(state, reason, solOut, pnlPct, realtimeSellPrice);
 
         logger.info('[Monitor] ✅ SELL 成功 %s  solIn=%.4f  solOut=%.4f  pnl=%+.4f SOL (%+.1f%%)  txid=%s',
           state.symbol, solIn, solOut, pnlSol, pnlPct, result.txid);
@@ -467,11 +487,12 @@ class TokenMonitor extends EventEmitter {
     wsHub.broadcast({ type: 'trade_record', ...rec });
   }
 
-  _finalizeTradeRecord(state, reason, solOut, pnlPct) {
+  _finalizeTradeRecord(state, reason, solOut, pnlPct, exitPrice) {
     const rec = state.tradeRecords[state.tradeRecords.length - 1];
     if (!rec) return;
     rec.exitAt     = Date.now();
     rec.exitReason = reason;
+    rec.exitPrice  = exitPrice ?? null;
     rec.solOut     = parseFloat(solOut.toFixed(6));
     rec.pnlPct     = parseFloat(pnlPct.toFixed(2));
     rec.pnlSol     = parseFloat((solOut - (state.position?.solIn ?? 0)).toFixed(6));

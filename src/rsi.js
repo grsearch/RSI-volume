@@ -72,7 +72,7 @@ function stepRSI(avgGain, avgLoss, lastClose, newPrice, period = RSI_PERIOD) {
  * @returns {{ pass: boolean, reason: string, buyVol: number, sellVol: number, ratio: number }}
  */
 function checkBuyVolume(closedCandles, currentCandle) {
-  if (!VOL_ENABLED) return { pass: true, reason: 'VOL_DISABLED', buyVol: 0, sellVol: 0, ratio: 0 };
+  if (!VOL_ENABLED) return { pass: true, reason: 'VOL_OFF(纯RSI模式)', buyVol: 0, sellVol: 0, ratio: 0 };
 
   // 回看K线数 = 窗口秒数 / K线秒数，至少1根
   const windowBars = Math.max(1, Math.ceil(VOL_WINDOW_SEC / KLINE_SEC));
