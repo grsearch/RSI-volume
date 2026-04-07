@@ -17,7 +17,7 @@ const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
 const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);  // 延长：15→30分钟
-const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '0');    // 0=禁用
+const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
 const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
@@ -235,8 +235,13 @@ class TokenMonitor extends EventEmitter {
       return;
     }
 
-    // 3. FDV 检查（已禁用，不再过滤）
+    // 3. FDV 检查：低于阈值立即退出监控
     const fdv = await birdeye.getFdv(address).catch(() => null);
+    if (fdv !== null && fdv !== undefined && Number.isFinite(fdv) && FDV_EXIT > 0 && fdv < FDV_EXIT) {
+      logger.warn('[Monitor] %s FDV=$%s < $%s，退出', state.symbol, Math.round(fdv), FDV_EXIT);
+      await this.removeToken(address, `FDV_TOO_LOW($${Math.round(fdv)})`);
+      return;
+    }
 
     // 4. 记录 tick（仅 Birdeye USD 价格，不含链上 SOL 计价数据）
     const tick = { price, ts: now };

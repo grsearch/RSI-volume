@@ -6,7 +6,7 @@
 //   SELL: RSI 下穿 70 / RSI > 80 / 止盈 / 止损 / 量能萎缩出场
 
 const RSI_PERIOD   = parseInt(process.env.RSI_PERIOD       || '7',  10);
-const RSI_BUY      = parseFloat(process.env.RSI_BUY_LEVEL  || '45');   // 放宽：30→45
+const RSI_BUY      = parseFloat(process.env.RSI_BUY_LEVEL  || '35');
 const RSI_SELL     = parseFloat(process.env.RSI_SELL_LEVEL  || '70');
 const RSI_PANIC    = parseFloat(process.env.RSI_PANIC_LEVEL || '80');
 const KLINE_SEC    = parseInt(process.env.KLINE_INTERVAL_SEC || '5', 10);   // 改为5秒K线
@@ -217,47 +217,32 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
     windowSec: VOL_WINDOW_SEC,
   };
 
-  // ── SELL 优先（持仓中） ────────────────────────────────────────
+  // ── SELL（持仓中） ───────────────────────────────────────────────
+  // 唯一卖出条件：过去15秒内 sellVolume ≥ buyVolume
   if (tokenState.inPosition) {
+    const sellWindowSec = 15;
+    const sellWindowBars = Math.max(1, Math.ceil(sellWindowSec / KLINE_SEC));
 
-    // 1. RSI > 80 恐慌卖
-    if (rsiRealtime > RSI_PANIC && lastCandleTs !== lastSellCandle) {
+    // 收集近15秒的K线（已收盘 + 当前未收盘）
+    const sellAllCandles = [...closedCandles];
+    const sellCurrentCandle = tokenState._currentCandle || null;
+    if (sellCurrentCandle) sellAllCandles.push(sellCurrentCandle);
+    const sellWindowCandles = sellAllCandles.slice(-sellWindowBars);
+
+    let sellBuy = 0, sellSell = 0;
+    for (const c of sellWindowCandles) {
+      sellBuy  += (c.buyVolume  || 0);
+      sellSell += (c.sellVolume || 0);
+    }
+
+    const hasData = (sellBuy + sellSell) > 0;
+
+    if (hasData && sellSell >= sellBuy && lastCandleTs !== lastSellCandle) {
       tokenState._lastSellCandle = lastCandleTs;
       updateState();
       return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-               reason: `RSI_PANIC(${rsiRealtime.toFixed(1)}>${RSI_PANIC})`, volume: volumeInfo };
-    }
-
-    // 2. RSI 下穿 70
-    if (prevRsi >= RSI_SELL && rsiRealtime < RSI_SELL && lastCandleTs !== lastSellCandle) {
-      tokenState._lastSellCandle = lastCandleTs;
-      updateState();
-      return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-               reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiRealtime.toFixed(1)})`, volume: volumeInfo };
-    }
-
-    // 3. 止盈 / 止损
-    if (tokenState.position && tokenState.position.entryPriceUsd) {
-      const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
-                / tokenState.position.entryPriceUsd * 100;
-      if (pnl >= TAKE_PROFIT_PCT) {
-        updateState();
-        return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-                 reason: `TAKE_PROFIT(+${pnl.toFixed(1)}%≥${TAKE_PROFIT_PCT}%)`, volume: volumeInfo };
-      }
-      if (pnl <= STOP_LOSS_PCT) {
-        updateState();
-        return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-                 reason: `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`, volume: volumeInfo };
-      }
-    }
-
-    // 4. 量能萎缩出场（新增）
-    const volDecay = checkVolumeDecay(closedCandles, tokenState);
-    if (volDecay.shouldExit) {
-      updateState();
-      return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-               reason: volDecay.reason, volume: volumeInfo };
+               reason: `SELL≥BUY_15s(sell=${sellSell.toFixed(2)}≥buy=${sellBuy.toFixed(2)})`,
+               volume: volumeInfo };
     }
   }
 
