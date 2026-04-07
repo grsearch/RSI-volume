@@ -107,18 +107,18 @@ function checkBuyVolume(closedCandles, currentCandle) {
     };
   }
 
-  // 核心条件：buy > sell
-  if (totalBuy > totalSell) {
+  // 核心条件：buy > sell × 1.1（买量需比卖量多10%）
+  if (totalBuy > totalSell * 1.1) {
     return {
       pass: true,
-      reason: `BUY>SELL(${totalBuy.toFixed(2)}>${totalSell.toFixed(2)},${(ratio*100).toFixed(0)}%,${VOL_WINDOW_SEC}s)`,
+      reason: `BUY>SELL×1.1(${totalBuy.toFixed(2)}>${(totalSell*1.1).toFixed(2)},${(ratio*100).toFixed(0)}%,${VOL_WINDOW_SEC}s)`,
       buyVol: totalBuy, sellVol: totalSell, ratio,
     };
   }
 
   return {
     pass: false,
-    reason: `SELL≥BUY(buy=${totalBuy.toFixed(2)},sell=${totalSell.toFixed(2)},${(ratio*100).toFixed(0)}%,${VOL_WINDOW_SEC}s)`,
+    reason: `BUY≤SELL×1.1(buy=${totalBuy.toFixed(2)},sell×1.1=${( totalSell*1.1).toFixed(2)},${(ratio*100).toFixed(0)}%,${VOL_WINDOW_SEC}s)`,
     buyVol: totalBuy, sellVol: totalSell, ratio,
   };
 }
@@ -237,11 +237,11 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
 
     const hasData = (sellBuy + sellSell) > 0;
 
-    if (hasData && sellSell >= sellBuy && lastCandleTs !== lastSellCandle) {
+    if (hasData && sellSell > sellBuy * 1.1 && lastCandleTs !== lastSellCandle) {
       tokenState._lastSellCandle = lastCandleTs;
       updateState();
       return { rsi: rsiRealtime, prevRsi, signal: 'SELL',
-               reason: `SELL≥BUY_15s(sell=${sellSell.toFixed(2)}≥buy=${sellBuy.toFixed(2)})`,
+               reason: `SELL>BUY×1.1_15s(sell=${sellSell.toFixed(2)}>buy×1.1=${(sellBuy*1.1).toFixed(2)})`,
                volume: volumeInfo };
     }
   }
