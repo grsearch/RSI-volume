@@ -20,7 +20,7 @@ const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '0');    // 0=禁用
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
-const DRY_RUN         = (process.env.DRY_RUN || 'false') === 'true';
+const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
 const TRADE_SOL       = parseFloat(process.env.TRADE_SIZE_SOL      || '0.2');
 
 // 全局交易记录
@@ -376,7 +376,11 @@ class TokenMonitor extends EventEmitter {
         logger.error('[Monitor] ❌ BUY 失败 %s: %s', state.symbol, err.message);
         logger.error('[Monitor]    请检查: WALLET_PRIVATE_KEY / JUPITER_API_KEY / 钱包余额');
         state.inPosition = false;
-        state._lastBuyCandle = -1;  // 允许下根K线重新尝试
+        state._lastBuyCandle = -1;
+        // 失败也记录到交易日志，方便 Dashboard 可见
+        this._addTradeLog(state, { type: 'BUY', symbol: state.symbol, price, reason,
+          txid: 'FAILED', solIn: TRADE_SOL, dryRun: false,
+          error: err.message.slice(0, 80) });
       }
     }
   }

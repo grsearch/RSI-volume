@@ -65,6 +65,9 @@
   <span id="token-count" class="badge gray">0 代币</span>
   <span id="data-stats" class="badge gray">数据: -</span>
 </header>
+<div id="live-warning" style="display:none;background:#4d1c1c;border-bottom:2px solid #f85149;padding:10px 20px;font-size:13px;color:#f85149;text-align:center">
+  ⚠️ <strong>实盘模式</strong> — 正在使用真实资金。如需空跑测试，请在 <code>.env</code> 中设置 <code>DRY_RUN=true</code> 并重启。
+</div>
 <main>
   <!-- 统计 -->
   <div class="card" style="grid-column:1/-1">
@@ -177,9 +180,11 @@ function loadInitialData(){
     if (d.dryRun) {
       modeBadge.textContent = '🔵 空跑模式';
       modeBadge.className = 'badge blue';
+      document.getElementById('live-warning').style.display = 'none';
     } else {
       modeBadge.textContent = '🔴 实盘模式';
       modeBadge.className = 'badge red';
+      document.getElementById('live-warning').style.display = 'block';
     }
   });
 
@@ -268,15 +273,19 @@ function addLogRow(d){
 
   const isBuy  = d.type === 'BUY';
   const isSell = d.type === 'SELL';
-  const typeHtml = isBuy
-    ? `<span class="log-buy">▲ BUY</span>`
-    : isSell
-      ? `<span class="log-sell">▼ SELL</span>`
-      : d.type;
+  const isFail = d.txid === 'FAILED';
+  const typeHtml = (isBuy && isFail)
+    ? `<span style="color:#f85149;font-weight:bold">✗ BUY失败</span>`
+    : isBuy
+      ? `<span class="log-buy">▲ BUY</span>`
+      : isSell
+        ? `<span class="log-sell">▼ SELL</span>`
+        : d.type;
 
   // 买入显示 solIn，卖出显示 solOut 和 pnl
   let solStr = '-';
-  if (isBuy  && d.solIn  != null) solStr = `投入 ${d.solIn.toFixed(4)} SOL`;
+  if (isBuy && isFail) solStr = `<span style="color:#f85149;font-size:11px">${d.error||'交易失败，检查钱包/API Key'}</span>`;
+  else if (isBuy && d.solIn != null) solStr = `投入 ${d.solIn.toFixed(4)} SOL`;
   if (isSell && d.solOut != null) {
     const pnlStr = d.pnlSol != null ? ` (${d.pnlSol>=0?'+':''}${d.pnlSol.toFixed(4)})` : '';
     solStr = `<span class="${pnlClass(d.pnlSol)}">产出 ${d.solOut.toFixed(4)} SOL${pnlStr}</span>`;
