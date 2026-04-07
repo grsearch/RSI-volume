@@ -18,9 +18,9 @@ const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '5',  10);
 const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '15', 10);
 const SKIP_FIRST      = parseInt(process.env.SKIP_FIRST_CANDLES   || '3',  10);
 // 量能萎缩出场参数
-const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '2', 10);
-const VOL_EXIT_RATIO       = parseFloat(process.env.VOL_EXIT_RATIO     || '1.0');
-const VOL_EXIT_LOOKBACK    = parseInt(process.env.VOL_EXIT_LOOKBACK    || '4', 10);
+const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '4',   10); // 连续4根（20秒）才触发
+const VOL_EXIT_RATIO       = parseFloat(process.env.VOL_EXIT_RATIO     || '0.5');     // 低于均量50%才算萎缩
+const VOL_EXIT_LOOKBACK    = parseInt(process.env.VOL_EXIT_LOOKBACK    || '6',   10); // 用6根K线算均量
 
 // ── Wilder RSI 计算 ──────────────────────────────────────────────
 
