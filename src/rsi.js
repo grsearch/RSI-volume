@@ -98,11 +98,12 @@ function checkBuyVolume(closedCandles, currentCandle) {
   const total = totalBuy + totalSell;
   const ratio = total > 0 ? totalBuy / total : 0;
 
-  // 没有链上方向数据（Helius 未连接时 buyVolume/sellVolume 全为0）
+  // 没有链上方向数据（Helius 未连接，或该币暂无链上成交）
+  // → 拒绝买入，不在没有量能确认的情况下下单
   if (total === 0) {
     return {
-      pass: true,  // 无方向数据时放行，退化为纯 RSI
-      reason: 'VOL_NO_DIRECTION_DATA',
+      pass: false,
+      reason: 'VOL_NO_DATA(等待链上成交)',
       buyVol: 0, sellVol: 0, ratio: 0,
     };
   }
