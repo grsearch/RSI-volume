@@ -6,8 +6,7 @@ const router  = express.Router();
 const monitor = require('../monitor');
 const logger  = require('../logger');
 
-const MIN_FDV = parseFloat(process.env.MIN_FDV_USD || '15000');
-const MIN_LP  = parseFloat(process.env.MIN_LP_USD  || '5000');
+// MIN_FDV / MIN_LP 过滤已移除
 
 router.post('/add-token', (req, res) => {
   const { address, symbol, network, fdv, lp } = req.body || {};
@@ -17,19 +16,6 @@ router.post('/add-token', (req, res) => {
   }
   if (network && network !== 'solana') {
     return res.status(400).json({ error: '仅支持 solana' });
-  }
-
-  if (fdv !== undefined && fdv !== null) {
-    if (Number(fdv) < MIN_FDV) {
-      logger.info('[Webhook] 忽略 %s：FDV=$%s < $%s', symbol, fdv, MIN_FDV);
-      return res.status(200).json({ ok: false, skip: true, reason: `FDV_TOO_LOW($${fdv}<$${MIN_FDV})` });
-    }
-  }
-  if (lp !== undefined && lp !== null) {
-    if (Number(lp) < MIN_LP) {
-      logger.info('[Webhook] 忽略 %s：LP=$%s < $%s', symbol, lp, MIN_LP);
-      return res.status(200).json({ ok: false, skip: true, reason: `LP_TOO_LOW($${lp}<$${MIN_LP})` });
-    }
   }
 
   const added = monitor.addToken(address, symbol, { network: 'solana', fdv, lp });

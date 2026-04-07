@@ -16,10 +16,10 @@ const wsHub     = require('./wsHub');
 const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
-const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '15', 10);
-const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000');
+const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);  // 延长：15→30分钟
+const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '0');    // 0=禁用
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
-const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '15', 10);
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
 const DRY_RUN         = (process.env.DRY_RUN || 'false') === 'true';
 const TRADE_SOL       = parseFloat(process.env.TRADE_SIZE_SOL      || '0.2');
 
@@ -152,22 +152,33 @@ class TokenMonitor extends EventEmitter {
     if (!state || state.exitSent) return;
 
     const now = Date.now();
-    // 把链上交易数据注入 tick 流（带 solAmount 和 isBuy）
-    const tick = {
-      price: trade.priceSol,  // SOL 计价的 token 价格
-      ts: trade.ts || now,
-      solAmount: trade.solAmount,  // 这笔交易的 SOL 成交额
-      isBuy: trade.isBuy,         // 是否为买入
-    };
 
-    state.ticks.push(tick);
+    // FIX: 链上价格是 SOL 计价，state.ticks 是 USD 计价（Birdeye），
+    //      不可混用——否则 K 线价格随机在 USD/SOL 之间跳动，RSI 完全错误。
+    //      链上数据只写入独立的 chainTrades 队列，专用于量能统计。
+    if (!state.chainTrades) state.chainTrades = [];
+    state.chainTrades.push({
+      ts       : trade.ts || now,
+      solAmount: trade.solAmount,
+      isBuy    : trade.isBuy,
+    });
 
-    // 持久化带链上数据的 tick
+    // 只保留最近 5 分钟（防止内存增长）
+    const cutoff5m = now - 5 * 60 * 1000;
+    while (state.chainTrades.length > 0 && state.chainTrades[0].ts < cutoff5m) {
+      state.chainTrades.shift();
+    }
+
+    // 持久化（保留完整数据供回测）
     dataStore.appendTick(address, {
-      ...tick,
-      symbol: state.symbol,
+      price    : trade.priceSol,
+      ts       : trade.ts || now,
+      symbol   : state.symbol,
       signature: trade.signature,
-      owner: trade.owner,
+      owner    : trade.owner,
+      solAmount: trade.solAmount,
+      isBuy    : trade.isBuy,
+      source   : 'helius',
     });
 
     logger.debug('[HeliusTrade] %s %s %.4f SOL @ %.10f (%s)',
@@ -211,15 +222,10 @@ class TokenMonitor extends EventEmitter {
       return;
     }
 
-    // 3. FDV 检查
-    const fdv = await birdeye.getFdv(address);
-    if (fdv !== null && fdv !== undefined && Number.isFinite(fdv) && fdv < FDV_EXIT) {
-      logger.warn('[Monitor] %s FDV=$%s < $%s，退出', state.symbol, fdv, FDV_EXIT);
-      await this.removeToken(address, `FDV_TOO_LOW($${Math.round(fdv)})`);
-      return;
-    }
+    // 3. FDV 检查（已禁用，不再过滤）
+    const fdv = await birdeye.getFdv(address).catch(() => null);
 
-    // 4. 记录 tick（增强：含可选的交易方向和金额）
+    // 4. 记录 tick（仅 Birdeye USD 价格，不含链上 SOL 计价数据）
     const tick = { price, ts: now };
     state.ticks.push(tick);
 
@@ -228,14 +234,46 @@ class TokenMonitor extends EventEmitter {
       price,
       ts: now,
       symbol: state.symbol,
+      source: 'birdeye',
     });
 
-    // 只保留最近 30 分钟的 ticks
-    const cutoff = now - 30 * 60 * 1000;
+    // 只保留最近 10 分钟的 ticks（5秒K线频率高，节省内存）
+    const cutoff = now - 10 * 60 * 1000;
     while (state.ticks.length > 0 && state.ticks[0].ts < cutoff) state.ticks.shift();
 
-    // 5. 聚合K线
+    // 5. 聚合K线（纯 USD 价格 ticks → OHLCV）
     const { closed: closedCandles, current: currentCandle } = buildCandles(state.ticks, KLINE_SEC);
+
+    // 5b. 把 chainTrades 的量能数据注入 K 线（按时间窗口对齐）
+    //     K 线的 buyVolume/sellVolume 由链上真实成交填充，价格和 RSI 只用 USD ticks
+    if (state.chainTrades && state.chainTrades.length > 0) {
+      const intervalMs = KLINE_SEC * 1000;
+      // 注入已收盘 K 线
+      for (const candle of closedCandles) {
+        const trades = state.chainTrades.filter(
+          t => t.ts >= candle.openTime && t.ts < candle.closeTime
+        );
+        if (trades.length > 0) {
+          candle.buyVolume  = trades.filter(t => t.isBuy).reduce((s, t) => s + (t.solAmount || 0), 0);
+          candle.sellVolume = trades.filter(t => !t.isBuy).reduce((s, t) => s + (t.solAmount || 0), 0);
+          candle.volume     = candle.buyVolume + candle.sellVolume || candle.volume;
+        }
+      }
+      // 注入当前未收盘 K 线
+      if (currentCandle) {
+        const trades = state.chainTrades.filter(
+          t => t.ts >= currentCandle.openTime && t.ts < currentCandle.closeTime
+        );
+        if (trades.length > 0) {
+          currentCandle.buyVolume  = trades.filter(t => t.isBuy).reduce((s, t) => s + (t.solAmount || 0), 0);
+          currentCandle.sellVolume = trades.filter(t => !t.isBuy).reduce((s, t) => s + (t.solAmount || 0), 0);
+          currentCandle.volume     = currentCandle.buyVolume + currentCandle.sellVolume || currentCandle.volume;
+        }
+      }
+    }
+
+    // 5c. 把当前 K 线存入 state，供 rsi.js 的 evaluateSignal 使用（修复 currentCandle 传 null 的问题）
+    state._currentCandle = currentCandle || null;
 
     // 6. RSI + 量能信号评估
     const realtimePrice = currentCandle ? currentCandle.close : price;
@@ -329,10 +367,10 @@ class TokenMonitor extends EventEmitter {
   }
 
   async _doSellExit(state, reason) {
-    if (state.exitSent) return;
+    if (state.exitSent) return;  // 防止同一笔卖单并发重入
     state.exitSent = true;
 
-    logger.info('[Monitor] 🔴 SELL %s | %s | DRY_RUN=%s', state.symbol, reason, DRY_RUN);
+    logger.info('[Monitor] 🔴 SELL %s | %s | DRY_RUN=%s (第%d笔)', state.symbol, reason, DRY_RUN, state.tradeCount);
 
     if (DRY_RUN) {
       // 空跑模式：用当前价格计算模拟盈亏
@@ -376,9 +414,15 @@ class TokenMonitor extends EventEmitter {
       }
     }
 
-    logger.info('[Monitor] 🏁 %s 第%d笔完成，5s后退出监控', state.symbol, state.tradeCount);
-    state.shouldExit = true;
-    setTimeout(() => this.removeToken(state.address, 'TRADE_DONE'), 5000);
+    logger.info('[Monitor] ✅ %s 第%d笔完成，继续监控等待下一个信号', state.symbol, state.tradeCount);
+
+    // 多次交易：卖出后重置状态，继续监控，不退出
+    state.exitSent   = false;
+    state.shouldExit = false;
+    state.position   = null;
+    // 重置 K 线防抖标记，立即允许下一笔买入信号
+    state._lastBuyCandle  = -1;
+    state._lastSellCandle = -1;
   }
 
   // ── 辅助工具 ────────────────────────────────────────────────────

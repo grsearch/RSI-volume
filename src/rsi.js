@@ -6,18 +6,18 @@
 //   SELL: RSI 下穿 70 / RSI > 80 / 止盈 / 止损 / 量能萎缩出场
 
 const RSI_PERIOD   = parseInt(process.env.RSI_PERIOD       || '7',  10);
-const RSI_BUY      = parseFloat(process.env.RSI_BUY_LEVEL  || '30');
+const RSI_BUY      = parseFloat(process.env.RSI_BUY_LEVEL  || '45');   // 放宽：30→45
 const RSI_SELL     = parseFloat(process.env.RSI_SELL_LEVEL  || '70');
 const RSI_PANIC    = parseFloat(process.env.RSI_PANIC_LEVEL || '80');
-const KLINE_SEC    = parseInt(process.env.KLINE_INTERVAL_SEC || '15', 10);
+const KLINE_SEC    = parseInt(process.env.KLINE_INTERVAL_SEC || '5', 10);   // 改为5秒K线
 
 // 量能参数
 const VOL_ENABLED         = (process.env.VOL_ENABLED || 'true') === 'true';
-const VOL_WINDOW_SEC      = parseInt(process.env.VOL_WINDOW_SEC       || '30', 10); // 买入确认窗口（秒），30秒=2根K线
+const VOL_WINDOW_SEC      = parseInt(process.env.VOL_WINDOW_SEC       || '15', 10); // 买入确认窗口（秒），15秒=3根5秒K线
 const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '2', 10);
 const VOL_EXIT_RATIO      = parseFloat(process.env.VOL_EXIT_RATIO     || '1.0');
 const VOL_EXIT_LOOKBACK   = parseInt(process.env.VOL_EXIT_LOOKBACK    || '4', 10);
-const SKIP_FIRST_CANDLES  = parseInt(process.env.SKIP_FIRST_CANDLES   || '8', 10);
+const SKIP_FIRST_CANDLES  = parseInt(process.env.SKIP_FIRST_CANDLES   || '3', 10);  // 放宽：8→3
 
 // 止盈止损
 const TAKE_PROFIT_PCT = parseFloat(process.env.TAKE_PROFIT_PCT || '50');
@@ -262,12 +262,13 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
   }
 
   // ── BUY ────────────────────────────────────────────────────────
-  // 方案B：RSI 处于超卖区间（≤30） + 窗口内 buyVolume > sellVolume → 买入
-  //   逻辑：价格在超卖区 + 资金开始净流入 = 入场
-  //   每根K线只检查一次（防抖）
+  // RSI 处于超卖区间（≤RSI_BUY） + 窗口内 buyVolume > sellVolume → 买入
+  //   包含当前未收盘K线的量能数据（currentCandle），避免延迟15秒
   if (!tokenState.inPosition) {
     if (rsiRealtime <= RSI_BUY && lastCandleTs !== lastBuyCandle) {
-      const volCheck = checkBuyVolume(closedCandles, null);
+      // 从 tokenState 取当前K线（由 monitor 传入）
+      const currentCandle = tokenState._currentCandle || null;
+      const volCheck = checkBuyVolume(closedCandles, currentCandle);
       volumeInfo.buyVol = volCheck.buyVol;
       volumeInfo.sellVol = volCheck.sellVol;
       volumeInfo.buyRatio = volCheck.ratio;
