@@ -37,6 +37,18 @@
   .stat-box.neutral .val{color:#58a6ff}
   @media(max-width:1100px){.stats-grid{grid-template-columns:repeat(4,1fr)}}
   @media(max-width:700px){main{grid-template-columns:1fr}.stats-grid{grid-template-columns:repeat(2,1fr)}}
+  /* 退出原因标签 */
+  .exit-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;white-space:nowrap}
+  .exit-panic{background:#4d1c1c;color:#f85149}
+  .exit-rsi{background:#3d2e00;color:#d29922}
+  .exit-tp{background:#1a4731;color:#3fb950}
+  .exit-sl{background:#4d1c1c;color:#f85149}
+  .exit-vol{background:#2d1b4e;color:#da8ee7}
+  .exit-fdv{background:#4d1c1c;color:#f85149}
+  .exit-exp{background:#21262d;color:#8b949e}
+  .exit-force{background:#21262d;color:#8b949e}
+  .exit-fail{background:#4d1c1c;color:#f85149}
+  .exit-hold{background:#21262d;color:#8b949e}
 </style>
 </head>
 <body>
@@ -85,10 +97,10 @@
   </div>
 
   <!-- 成交记录 -->
-  <div class="card">
+  <div class="card" style="grid-column:1/-1">
     <h2>成交记录 <span id="pnl-summary" style="font-size:11px;color:#8b949e;margin-left:8px"></span></h2>
     <table id="tbl-records">
-      <thead><tr><th>代币</th><th>买入SOL</th><th>卖出SOL</th><th>PnL(SOL)</th><th>PnL%</th><th>原因</th></tr></thead>
+      <thead><tr><th>代币</th><th>买入SOL</th><th>卖出SOL</th><th>PnL(SOL)</th><th>PnL%</th><th>退出原因</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -242,10 +254,42 @@ function addRecordRow(d){
     <td>${d.solOut != null ? d.solOut.toFixed(4) : '-'}</td>
     <td class="${(d.pnlSol??0)>=0?'buy':'sell'}">${pnlSolStr}</td>
     <td class="${p>=0?'buy':'sell'}">${p!=null?((p>=0?'+':'')+p.toFixed(2)+'%'):'-'}</td>
-    <td style="color:#8b949e;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${d.exitReason||''}">${d.exitReason||'持仓中'}</td>
+    <td>${fmtExitReason(d.exitReason)}</td>
   `;
   tbody.prepend(tr);
   while(tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
+}
+
+function fmtExitReason(reason) {
+  if (!reason) return '<span class="exit-tag exit-hold">持仓中</span>';
+  const r = reason;
+  // 提取括号内的具体数值
+  const detail = r.match(/\(([^)]*)\)/)?.[1] || '';
+
+  if (r.startsWith('RSI_PANIC'))
+    return `<span class="exit-tag exit-panic">RSI恐慌 ${detail}</span>`;
+  if (r.startsWith('RSI_CROSS_DOWN'))
+    return `<span class="exit-tag exit-rsi">RSI下穿70 ${detail}</span>`;
+  if (r.startsWith('TAKE_PROFIT'))
+    return `<span class="exit-tag exit-tp">止盈 ${detail}</span>`;
+  if (r.startsWith('STOP_LOSS'))
+    return `<span class="exit-tag exit-sl">止损 ${detail}</span>`;
+  if (r.startsWith('VOL_DECAY'))
+    return `<span class="exit-tag exit-vol">量能萎缩 ${detail}</span>`;
+  if (r.includes('FDV_TOO_LOW'))
+    return `<span class="exit-tag exit-fdv">FDV过低 ${detail}</span>`;
+  if (r.includes('EXPIRED'))
+    return `<span class="exit-tag exit-exp">到期退出</span>`;
+  if (r.includes('FORCED_EXIT'))
+    return `<span class="exit-tag exit-force">强制退出 ${detail}</span>`;
+  if (r.includes('SELL_FAILED'))
+    return `<span class="exit-tag exit-fail">卖出失败</span>`;
+  if (r.includes('SHUTDOWN'))
+    return `<span class="exit-tag exit-force">服务关闭</span>`;
+  if (r.includes('TRADE_DONE'))
+    return `<span class="exit-tag exit-hold">交易完成</span>`;
+  // 兜底
+  return `<span class="exit-tag exit-hold" title="${r}">${r}</span>`;
 }
 
 function updateCount(){
