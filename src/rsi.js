@@ -8,11 +8,19 @@
 // 量能数据来源：Helius Enhanced WebSocket（链上真实成交）
 // 无链上数据时：拒绝买入，不退化为纯RSI
 
-const RSI_PERIOD  = parseInt(process.env.RSI_PERIOD          || '7',  10);
-const RSI_BUY     = parseFloat(process.env.RSI_BUY_LEVEL     || '35');
-const KLINE_SEC   = parseInt(process.env.KLINE_INTERVAL_SEC  || '5',  10);
-const VOL_WIN_SEC = parseInt(process.env.VOL_WINDOW_SEC      || '15', 10);
-const SKIP_FIRST  = parseInt(process.env.SKIP_FIRST_CANDLES  || '3',  10);
+const RSI_PERIOD      = parseInt(process.env.RSI_PERIOD          || '7',  10);
+const RSI_BUY         = parseFloat(process.env.RSI_BUY_LEVEL     || '35');
+const RSI_SELL        = parseFloat(process.env.RSI_SELL_LEVEL     || '70');
+const RSI_PANIC       = parseFloat(process.env.RSI_PANIC_LEVEL    || '80');
+const TAKE_PROFIT_PCT = parseFloat(process.env.TAKE_PROFIT_PCT    || '50');
+const STOP_LOSS_PCT   = parseFloat(process.env.STOP_LOSS_PCT      || '-10');
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '5',  10);
+const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '15', 10);
+const SKIP_FIRST      = parseInt(process.env.SKIP_FIRST_CANDLES   || '3',  10);
+// 量能萎缩出场参数
+const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '2', 10);
+const VOL_EXIT_RATIO       = parseFloat(process.env.VOL_EXIT_RATIO     || '1.0');
+const VOL_EXIT_LOOKBACK    = parseInt(process.env.VOL_EXIT_LOOKBACK    || '4', 10);
 
 // ── Wilder RSI 计算 ──────────────────────────────────────────────
 
@@ -119,19 +127,58 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
     windowSec: VOL_WIN_SEC,
   };
 
-  // ── SELL：过去15秒 sellVolume > buyVolume × 1.1 ──────────────
+  // ── SELL（持仓中，优先级从高到低） ─────────────────────────────
   if (tokenState.inPosition) {
-    const sv = getVolume(getWindowCandles(closedCandles, currentCandle, 15));
-    if (sv.total > 0
-        && sv.sell > sv.buy * 1.1
-        && lastCandleTs !== (tokenState._lastSellCandle || -1)) {
+    const lastSell = tokenState._lastSellCandle || -1;
+
+    // 1. RSI > 80 恐慌卖
+    if (rsiNow > RSI_PANIC && lastCandleTs !== lastSell) {
       tokenState._lastSellCandle = lastCandleTs;
       updateState();
-      return {
-        rsi: rsiNow, prevRsi, signal: 'SELL',
-        reason: `SELL>BUY×1.1_15s(sell=${sv.sell.toFixed(2)}>buy×1.1=${(sv.buy*1.1).toFixed(2)})`,
-        volume: volumeInfo,
-      };
+      return { rsi: rsiNow, prevRsi, signal: 'SELL',
+               reason: `RSI_PANIC(${rsiNow.toFixed(1)}>${RSI_PANIC})`, volume: volumeInfo };
+    }
+
+    // 2. RSI 下穿 70
+    if (prevRsi >= RSI_SELL && rsiNow < RSI_SELL && lastCandleTs !== lastSell) {
+      tokenState._lastSellCandle = lastCandleTs;
+      updateState();
+      return { rsi: rsiNow, prevRsi, signal: 'SELL',
+               reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiNow.toFixed(1)})`, volume: volumeInfo };
+    }
+
+    // 3. 止盈 / 止损
+    if (tokenState.position && tokenState.position.entryPriceUsd) {
+      const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
+                / tokenState.position.entryPriceUsd * 100;
+      if (pnl >= TAKE_PROFIT_PCT) {
+        updateState();
+        return { rsi: rsiNow, prevRsi, signal: 'SELL',
+                 reason: `TAKE_PROFIT(+${pnl.toFixed(1)}%≥${TAKE_PROFIT_PCT}%)`, volume: volumeInfo };
+      }
+      if (pnl <= STOP_LOSS_PCT) {
+        updateState();
+        return { rsi: rsiNow, prevRsi, signal: 'SELL',
+                 reason: `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`, volume: volumeInfo };
+      }
+    }
+
+    // 4. 量能萎缩出场
+    if (closedCandles.length >= VOL_EXIT_LOOKBACK + VOL_EXIT_CONSECUTIVE) {
+      const avgEnd   = closedCandles.length - VOL_EXIT_CONSECUTIVE;
+      const avgStart = Math.max(0, avgEnd - VOL_EXIT_LOOKBACK);
+      const avgVol   = closedCandles.slice(avgStart, avgEnd)
+                         .reduce((s, c) => s + (c.volume || 0), 0) / VOL_EXIT_LOOKBACK;
+      if (avgVol > 0) {
+        const recent    = closedCandles.slice(-VOL_EXIT_CONSECUTIVE);
+        const allDecayed = recent.every(c => (c.volume || 0) < avgVol * VOL_EXIT_RATIO);
+        if (allDecayed) {
+          updateState();
+          const vols = recent.map(c => (c.volume || 0).toFixed(0)).join(',');
+          return { rsi: rsiNow, prevRsi, signal: 'SELL',
+                   reason: `VOL_DECAY([${vols}]<avg=${avgVol.toFixed(0)})`, volume: volumeInfo };
+        }
+      }
     }
   }
 
@@ -220,5 +267,10 @@ module.exports = {
   buildCandles,
   calcRSIWithState,
   stepRSI,
-  CONFIG: { RSI_PERIOD, RSI_BUY, KLINE_SEC, VOL_WIN_SEC, SKIP_FIRST },
+  CONFIG: {
+    RSI_PERIOD, RSI_BUY, RSI_SELL, RSI_PANIC,
+    TAKE_PROFIT_PCT, STOP_LOSS_PCT,
+    KLINE_SEC, VOL_WIN_SEC, SKIP_FIRST,
+    VOL_EXIT_CONSECUTIVE, VOL_EXIT_RATIO, VOL_EXIT_LOOKBACK,
+  },
 };

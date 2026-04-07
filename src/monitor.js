@@ -337,7 +337,13 @@ class TokenMonitor extends EventEmitter {
 
     // 9. 执行信号
     if (signal === 'BUY' && !state.inPosition && !state.shouldExit) {
-      await this._doBuy(state, price, reason);
+      // 检查冷却期
+      if (state._cooldownUntil && Date.now() < state._cooldownUntil) {
+        const remain = Math.ceil((state._cooldownUntil - Date.now()) / 1000);
+        logger.debug('[Monitor] %s 冷却中，还剩 %ds', state.symbol, remain);
+      } else {
+        await this._doBuy(state, price, reason);
+      }
     } else if (signal === 'SELL' && state.inPosition) {
       await this._doSellExit(state, reason);
     }
@@ -449,9 +455,15 @@ class TokenMonitor extends EventEmitter {
     state.exitSent   = false;
     state.shouldExit = false;
     state.position   = null;
-    // 重置 K 线防抖标记，立即允许下一笔买入信号
-    state._lastBuyCandle  = -1;
     state._lastSellCandle = -1;
+
+    // 冷却期：卖出后至少等 60 秒再允许下一笔买入
+    const COOLDOWN_MS = parseInt(process.env.TRADE_COOLDOWN_SEC || '60', 10) * 1000;
+    state._lastBuyCandle  = -1;
+    state._cooldownUntil  = Date.now() + COOLDOWN_MS;
+    logger.info('[Monitor] ⏳ %s 冷却 %ds，%s 后可再次买入',
+      state.symbol, COOLDOWN_MS / 1000,
+      new Date(state._cooldownUntil).toLocaleTimeString());
   }
 
   // ── 辅助工具 ────────────────────────────────────────────────────

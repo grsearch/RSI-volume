@@ -133,7 +133,7 @@
 
 <script>
 const rows   = {};
-const logMax = 200;
+const logMax = 50;
 // 本地缓存成交记录，按 id 去重更新
 const recordMap = {};
 
@@ -190,15 +190,17 @@ function loadInitialData(){
 
   // 交易日志（历史）
   fetch('/api/trades').then(r=>r.json()).then(logs => {
-    // 倒序：最新的在上面
-    logs.slice(0, logMax).forEach(addLogRow);
+    logs.slice(0, 50).forEach(addLogRow);
     updateLogCount();
   });
 
   // 成交记录（历史）
   fetch('/api/trade-records').then(r=>r.json()).then(records => {
-    records.forEach(upsertRecord);
-    refreshStats();
+    // 只渲染最新50条，防止2000+条卡死浏览器
+    records.slice(0, 50).forEach(upsertRecord);
+    // 但统计用全量数据
+    updatePnlSummary(records);
+    updateStats(records);
   });
 
   // 报告
@@ -316,6 +318,12 @@ function updateLogCount(){
 function upsertRecord(d){
   if (!d.id) return;
   recordMap[d.id] = d;
+  // 超过200条丢弃最老的
+  const keys = Object.keys(recordMap);
+  if (keys.length > 200) {
+    const sorted = keys.sort((a,b) => (recordMap[a].buyAt||0) - (recordMap[b].buyAt||0));
+    sorted.slice(0, keys.length - 200).forEach(k => delete recordMap[k]);
+  }
   renderRecords();
 }
 
@@ -324,7 +332,7 @@ function renderRecords(){
   // 按买入时间倒序
   const sorted = Object.values(recordMap).sort((a,b) => (b.buyAt||0)-(a.buyAt||0));
   tbody.innerHTML = '';
-  sorted.slice(0, 100).forEach(d => {
+  sorted.slice(0, 50).forEach(d => {
     const tr = document.createElement('tr');
     const isOpen = !d.exitAt;  // 持仓中
     if (isOpen) tr.className = 'in-pos-row';
