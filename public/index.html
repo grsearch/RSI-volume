@@ -104,7 +104,7 @@
     <div class="scrollable">
       <table id="tbl-log">
         <thead><tr>
-          <th>时间</th><th>类型</th><th>代币</th><th>价格(USD)</th><th>SOL投入/产出</th><th>原因</th><th>模式</th>
+          <th>时间</th><th>类型</th><th>代币</th><th>价格(USD)</th><th>RSI</th><th>Buy/Sell(SOL)</th><th>SOL投入/产出</th><th>原因</th><th>模式</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -117,7 +117,7 @@
     <div class="scrollable">
       <table id="tbl-records">
         <thead><tr>
-          <th>代币</th><th>买入时间</th><th>买入价</th><th>买入SOL</th><th>卖出价</th><th>卖出SOL</th><th>PnL(SOL)</th><th>PnL%</th><th>退出原因</th>
+          <th>代币</th><th>买入时间</th><th>买入价</th><th>买入RSI</th><th>Buy/Sell</th><th>买入SOL</th><th>卖出价</th><th>卖出SOL</th><th>PnL(SOL)</th><th>PnL%</th><th>退出原因</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -293,13 +293,19 @@ function addLogRow(d){
     solStr = `<span class="${pnlClass(d.pnlSol)}">产出 ${d.solOut.toFixed(4)} SOL${pnlStr}</span>`;
   }
 
+  const rsiStr = d.rsi != null ? `<span class="${rsiClass(d.rsi)}">${Number(d.rsi).toFixed(1)}</span>` : '-';
+  const bvStr  = (d.buyVol != null || d.sellVol != null)
+    ? `<span style="color:#3fb950">${(d.buyVol||0).toFixed(2)}</span>/<span style="color:#f85149">${(d.sellVol||0).toFixed(2)}</span>`
+    : '-';
   tr.innerHTML = `
     <td style="color:#8b949e;font-size:11px;white-space:nowrap">${fmtTime(d.ts)}</td>
     <td>${typeHtml}</td>
     <td style="font-weight:bold">${d.symbol}</td>
     <td>${fmt(d.price,8)}</td>
+    <td>${rsiStr}</td>
+    <td style="font-size:11px">${bvStr}</td>
     <td style="font-size:11px">${solStr}</td>
-    <td style="color:#8b949e;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.reason||''}">${d.reason||''}</td>
+    <td style="color:#8b949e;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.reason||''}">${d.reason||''}</td>
     <td>${d.dryRun?'<span class="badge blue" style="font-size:10px">空跑</span>':'<span class="badge red" style="font-size:10px">实盘</span>'}</td>
   `;
   // 最新的在最上面
@@ -348,10 +354,17 @@ function renderRecords(){
     const exitPriceStr = d.exitPrice != null ? fmt(d.exitPrice, 8) : (isOpen ? '<span style="color:#58a6ff">持仓中</span>' : '-');
     const exitSolStr   = d.solOut != null ? d.solOut.toFixed(4) : (isOpen ? '...' : '-');
 
+    const recRsiStr = d.entryRsi != null
+      ? `<span class="${rsiClass(d.entryRsi)}">${Number(d.entryRsi).toFixed(1)}</span>` : '-';
+    const recBvStr = (d.entryBuyVol != null || d.entrySellVol != null)
+      ? `<span style="color:#3fb950">${(d.entryBuyVol||0).toFixed(2)}</span>/<span style="color:#f85149">${(d.entrySellVol||0).toFixed(2)}</span>`
+      : '-';
     tr.innerHTML = `
       <td style="font-weight:bold">${d.symbol}${isOpen ? ' <span class="badge green" style="font-size:9px">●</span>' : ''}</td>
       <td style="color:#8b949e;font-size:11px;white-space:nowrap">${fmtDateTime(d.buyAt)}</td>
       <td>${d.entryPrice != null ? fmt(d.entryPrice,8) : '-'}</td>
+      <td>${recRsiStr}</td>
+      <td style="font-size:11px">${recBvStr}</td>
       <td>${d.solIn != null ? d.solIn.toFixed(4) : '-'}</td>
       <td>${exitPriceStr}</td>
       <td>${exitSolStr}</td>

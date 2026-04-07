@@ -342,7 +342,7 @@ class TokenMonitor extends EventEmitter {
         const remain = Math.ceil((state._cooldownUntil - Date.now()) / 1000);
         logger.debug('[Monitor] %s 冷却中，还剩 %ds', state.symbol, remain);
       } else {
-        await this._doBuy(state, price, reason);
+        await this._doBuy(state, price, reason, rsi, volume);
       }
     } else if (signal === 'SELL' && state.inPosition) {
       await this._doSellExit(state, reason);
@@ -351,7 +351,7 @@ class TokenMonitor extends EventEmitter {
 
   // ── 交易执行 ────────────────────────────────────────────────────
 
-  async _doBuy(state, price, reason) {
+  async _doBuy(state, price, reason, rsi, volume) {
     logger.info('[Monitor] 🟢 BUY %s @ %.8f | %s | DRY_RUN=%s', state.symbol, price, reason, DRY_RUN);
     state.inPosition = true;
 
@@ -364,9 +364,14 @@ class TokenMonitor extends EventEmitter {
         solIn         : TRADE_SOL,
         buyTxid       : `DRY_${Date.now()}`,
         buyTime       : Date.now(),
+        entryRsi      : rsi,
+        entryBuyVol   : volume?.buyVol  ?? 0,
+        entrySellVol  : volume?.sellVol ?? 0,
       };
       state.tradeCount++;
-      this._addTradeLog(state, { type: 'BUY', symbol: state.symbol, price, reason, txid: state.position.buyTxid, solIn: TRADE_SOL, dryRun: true });
+      this._addTradeLog(state, { type: 'BUY', symbol: state.symbol, price, reason,
+        txid: state.position.buyTxid, solIn: TRADE_SOL, dryRun: true,
+        rsi, buyVol: volume?.buyVol ?? 0, sellVol: volume?.sellVol ?? 0 });
       this._createTradeRecord(state);
       logger.info('[Monitor] ✅ DRY_RUN BUY 模拟成功 %s @ %.8f  solIn=%.4f', state.symbol, price, TRADE_SOL);
     } else {
@@ -380,7 +385,12 @@ class TokenMonitor extends EventEmitter {
           buyTime       : Date.now(),
         };
         state.tradeCount++;
-        this._addTradeLog(state, { type: 'BUY', symbol: state.symbol, price, reason, txid: result.txid, solIn: result.solIn });
+        state.position.entryRsi     = rsi;
+        state.position.entryBuyVol  = volume?.buyVol  ?? 0;
+        state.position.entrySellVol = volume?.sellVol ?? 0;
+        this._addTradeLog(state, { type: 'BUY', symbol: state.symbol, price, reason,
+          txid: result.txid, solIn: result.solIn,
+          rsi, buyVol: volume?.buyVol ?? 0, sellVol: volume?.sellVol ?? 0 });
         this._createTradeRecord(state);
         logger.info('[Monitor] ✅ BUY 成功 %s  solIn=%.4f SOL  txid=%s', state.symbol, result.solIn, result.txid);
       } catch (err) {
@@ -420,7 +430,10 @@ class TokenMonitor extends EventEmitter {
 
       state.inPosition = false;
       this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, price: currentPrice, reason,
-        txid: `DRY_${Date.now()}`, solIn, solOut, pnlSol, dryRun: true });
+        txid: `DRY_${Date.now()}`, solIn, solOut, pnlSol, dryRun: true,
+        entryRsi: state.position?.entryRsi ?? null,
+        entryBuyVol: state.position?.entryBuyVol ?? 0,
+        entrySellVol: state.position?.entrySellVol ?? 0 });
       this._finalizeTradeRecord(state, reason, solOut, pnlPct, currentPrice);
 
       logger.info('[Monitor] ✅ DRY_RUN SELL %s  solIn=%.4f  solOut=%.4f  pnl=%+.4f SOL (%+.1f%%)',
@@ -483,7 +496,10 @@ class TokenMonitor extends EventEmitter {
       symbol     : state.symbol,
       buyAt      : state.position.buyTime,
       buyTxid    : state.position.buyTxid,
-      entryPrice : state.position.entryPriceUsd,
+      entryPrice   : state.position.entryPriceUsd,
+      entryRsi     : state.position.entryRsi   ?? null,
+      entryBuyVol  : state.position.entryBuyVol  ?? 0,
+      entrySellVol : state.position.entrySellVol ?? 0,
       entryFdv   : state.fdv,
       entryLp    : state.lp,
       solIn      : state.position.solIn,
