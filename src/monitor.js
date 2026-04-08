@@ -18,6 +18,7 @@ const heliusWs  = require('./heliusWs');
 
 const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);  // 监控时长60分钟
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
+const LP_EXIT         = parseFloat(process.env.LP_EXIT_USD         || '5000');  // LP低于此值立即退出监控
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
 const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
@@ -236,10 +237,15 @@ class TokenMonitor extends EventEmitter {
     }
 
     // 3. FDV 检查：低于阈值立即退出监控
-    const fdv = await birdeye.getFdv(address).catch(() => null);
-    if (fdv !== null && fdv !== undefined && Number.isFinite(fdv) && FDV_EXIT > 0 && fdv < FDV_EXIT) {
+    const { fdv, lp } = await birdeye.getFdv(address).catch(() => ({ fdv: null, lp: null }));
+    if (Number.isFinite(fdv) && FDV_EXIT > 0 && fdv < FDV_EXIT) {
       logger.warn('[Monitor] %s FDV=$%s < $%s，退出', state.symbol, Math.round(fdv), FDV_EXIT);
       await this.removeToken(address, `FDV_TOO_LOW($${Math.round(fdv)})`);
+      return;
+    }
+    if (Number.isFinite(lp) && LP_EXIT > 0 && lp < LP_EXIT) {
+      logger.warn('[Monitor] %s LP=$%s < $%s，退出', state.symbol, Math.round(lp), LP_EXIT);
+      await this.removeToken(address, `LP_TOO_LOW($${Math.round(lp)})`);
       return;
     }
 
