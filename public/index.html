@@ -90,7 +90,7 @@
     <div class="scrollable">
       <table id="tbl-tokens">
         <thead><tr>
-          <th>代币</th><th>合约</th><th>价格</th><th>RSI</th><th>prevRSI</th>
+          <th>代币</th><th>合约</th><th>价格</th><th>FDV</th><th>LP</th><th>RSI</th><th>prevRSI</th>
           <th>Buy/Sell</th><th>信号</th><th>原因</th><th>K线数</th><th>状态</th><th>到期</th>
         </tr></thead>
         <tbody></tbody>
@@ -237,6 +237,8 @@ function handleTick(d){
     <td>${d.symbol}</td>
     <td><a href="${gmgnUrl}" target="_blank" style="color:#58a6ff;text-decoration:none;font-size:11px" title="${d.address}">${addrShort}</a></td>
     <td>${fmt(d.price,8)}</td>
+    <td style="font-size:11px;color:#8b949e">${d.fdv!=null?'$'+Math.round(d.fdv).toLocaleString():'-'}</td>
+    <td style="font-size:11px;color:#8b949e">${d.lp!=null?'$'+Math.round(d.lp).toLocaleString():'-'}</td>
     <td class="${rsiClass(rsi)}">${rsi==null?'预热':rsi.toFixed(2)}</td>
     <td class="${rsiClass(d.prevRsi)}">${d.prevRsi==null?'-':d.prevRsi.toFixed(2)}</td>
     <td class="${volClass(bv,sv)}" title="Buy/Sell SOL (${d.volume?.windowSec||15}s)">${bsStr}</td>

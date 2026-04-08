@@ -9,14 +9,14 @@
 // 无链上数据时：拒绝买入，不退化为纯RSI
 
 const RSI_PERIOD      = parseInt(process.env.RSI_PERIOD          || '7',  10);
-const RSI_BUY         = parseFloat(process.env.RSI_BUY_LEVEL     || '35');
+const RSI_BUY         = parseFloat(process.env.RSI_BUY_LEVEL     || '30');
 const RSI_SELL        = parseFloat(process.env.RSI_SELL_LEVEL     || '70');
 const RSI_PANIC       = parseFloat(process.env.RSI_PANIC_LEVEL    || '80');
-const TAKE_PROFIT_PCT = parseFloat(process.env.TAKE_PROFIT_PCT    || '50');
 const STOP_LOSS_PCT   = parseFloat(process.env.STOP_LOSS_PCT      || '-10');
-const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '5',  10);
-const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '15', 10);
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '15', 10);  // 15秒K线
+const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '60', 10);  // 量能窗口1分钟
 const SKIP_FIRST      = parseInt(process.env.SKIP_FIRST_CANDLES   || '3',  10);
+const MIN_BUY_VOL     = parseFloat(process.env.MIN_BUY_VOL_SOL    || '2.0'); // 窗口内buyVolume至少2 SOL
 // 量能萎缩出场参数
 const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '4',   10); // 连续4根（20秒）才触发
 const VOL_EXIT_RATIO       = parseFloat(process.env.VOL_EXIT_RATIO     || '0.5');     // 低于均量50%才算萎缩
@@ -151,11 +151,6 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
     if (tokenState.position && tokenState.position.entryPriceUsd) {
       const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
                 / tokenState.position.entryPriceUsd * 100;
-      if (pnl >= TAKE_PROFIT_PCT) {
-        updateState();
-        return { rsi: rsiNow, prevRsi, signal: 'SELL',
-                 reason: `TAKE_PROFIT(+${pnl.toFixed(1)}%≥${TAKE_PROFIT_PCT}%)`, volume: volumeInfo };
-      }
       if (pnl <= STOP_LOSS_PCT) {
         updateState();
         return { rsi: rsiNow, prevRsi, signal: 'SELL',
@@ -196,13 +191,20 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
                reason: `RSI_OK(${rsiNow.toFixed(1)})+VOL_NO_DATA`, volume: volumeInfo };
     }
 
+    // buyVolume 不足最小门槛 → 拒绝
+    if (bv.buy < MIN_BUY_VOL) {
+      updateState();
+      return { rsi: rsiNow, prevRsi, signal: null,
+               reason: `RSI_OK+BUY_VOL_LOW(${bv.buy.toFixed(2)}<${MIN_BUY_VOL}SOL)`, volume: volumeInfo };
+    }
+
     // buy > sell × 1.1
     if (bv.buy > bv.sell * 1.1) {
       tokenState._lastBuyCandle = lastCandleTs;
       updateState();
       return {
         rsi: rsiNow, prevRsi, signal: 'BUY',
-        reason: `RSI(${rsiNow.toFixed(1)}≤${RSI_BUY})+BUY>SELL×1.1(${bv.buy.toFixed(2)}>${(bv.sell*1.1).toFixed(2)},${VOL_WIN_SEC}s)`,
+        reason: `RSI(${rsiNow.toFixed(1)}≤${RSI_BUY})+BUY>${MIN_BUY_VOL}SOL+BUY>SELL×1.1(${bv.buy.toFixed(2)}>${(bv.sell*1.1).toFixed(2)},${VOL_WIN_SEC}s)`,
         volume: volumeInfo,
       };
     }
@@ -269,7 +271,7 @@ module.exports = {
   stepRSI,
   CONFIG: {
     RSI_PERIOD, RSI_BUY, RSI_SELL, RSI_PANIC,
-    TAKE_PROFIT_PCT, STOP_LOSS_PCT,
+    STOP_LOSS_PCT,
     KLINE_SEC, VOL_WIN_SEC, SKIP_FIRST,
     VOL_EXIT_CONSECUTIVE, VOL_EXIT_RATIO, VOL_EXIT_LOOKBACK,
   },

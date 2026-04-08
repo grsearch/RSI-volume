@@ -16,10 +16,11 @@ const wsHub     = require('./wsHub');
 const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
-const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);  // 延长：15→30分钟
+const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);  // 监控时长60分钟
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
+const LP_EXIT         = parseFloat(process.env.LP_EXIT_USD         || '5000');  // LP低于此值立即退出监控
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
-const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '15', 10);  // 15秒K线
 const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
 const TRADE_SOL       = parseFloat(process.env.TRADE_SIZE_SOL      || '0.2');
 
@@ -99,6 +100,8 @@ class TokenMonitor extends EventEmitter {
       addedAt       : now,
       expiresAt     : now + MONITOR_MINUTES * 60 * 1000,
       ticks         : [],
+      latestFdv     : null,
+      latestLp      : null,
       inPosition    : false,
       position      : null,
       tradeCount    : 0,
@@ -236,12 +239,20 @@ class TokenMonitor extends EventEmitter {
     }
 
     // 3. FDV 检查：低于阈值立即退出监控
-    const fdv = await birdeye.getFdv(address).catch(() => null);
-    if (fdv !== null && fdv !== undefined && Number.isFinite(fdv) && FDV_EXIT > 0 && fdv < FDV_EXIT) {
+    const { fdv, lp } = await birdeye.getFdv(address).catch(() => ({ fdv: null, lp: null }));
+    if (Number.isFinite(fdv) && FDV_EXIT > 0 && fdv < FDV_EXIT) {
       logger.warn('[Monitor] %s FDV=$%s < $%s，退出', state.symbol, Math.round(fdv), FDV_EXIT);
       await this.removeToken(address, `FDV_TOO_LOW($${Math.round(fdv)})`);
       return;
     }
+    if (Number.isFinite(lp) && LP_EXIT > 0 && lp < LP_EXIT) {
+      logger.warn('[Monitor] %s LP=$%s < $%s，退出', state.symbol, Math.round(lp), LP_EXIT);
+      await this.removeToken(address, `LP_TOO_LOW($${Math.round(lp)})`);
+      return;
+    }
+    // 存储最新 FDV/LP 供 Dashboard 显示
+    if (Number.isFinite(fdv)) state.latestFdv = fdv;
+    if (Number.isFinite(lp))  state.latestLp  = lp;
 
     // 4. 记录 tick（仅 Birdeye USD 价格，不含链上 SOL 计价数据）
     const tick = { price, ts: now };
@@ -255,8 +266,8 @@ class TokenMonitor extends EventEmitter {
       source: 'birdeye',
     });
 
-    // 只保留最近 10 分钟的 ticks（5秒K线频率高，节省内存）
-    const cutoff = now - 10 * 60 * 1000;
+    // 只保留最近 30 分钟的 ticks
+    const cutoff = now - 30 * 60 * 1000;
     while (state.ticks.length > 0 && state.ticks[0].ts < cutoff) state.ticks.shift();
 
     // 5. 聚合K线（纯 USD 价格 ticks → OHLCV）
@@ -319,7 +330,8 @@ class TokenMonitor extends EventEmitter {
       address,
       symbol  : state.symbol,
       price,
-      fdv,
+      fdv     : state.latestFdv,
+      lp      : state.latestLp,
       rsi     : Number.isFinite(rsi) ? parseFloat(rsi.toFixed(2)) : null,
       prevRsi : Number.isFinite(prevRsi) ? parseFloat(prevRsi.toFixed(2)) : null,
       signal,

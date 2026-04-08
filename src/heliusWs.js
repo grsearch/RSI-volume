@@ -38,8 +38,17 @@ function getWsUrl() {
   return `wss://atlas-mainnet.helius-rpc.com/?api-key=${apiKey}`;
 }
 
-// Pump AMM Program ID
-const PUMP_AMM_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
+// 监听的 DEX Program IDs
+const DEX_PROGRAMS = [
+  'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA', // Pump AMM
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM v4
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', // Raydium CLMM
+  'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C', // Raydium CPMM
+  '9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP', // Orca Whirlpool (legacy)
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool v2
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',  // Meteora DLMM
+  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EkSX2zNX', // Meteora Pools
+];
 
 const LAMPORTS     = 1e9;
 const PING_MS      = 30000;    // 30秒 ping 保活
@@ -150,7 +159,7 @@ class HeliusTradeStream {
       method: 'transactionSubscribe',
       params: [
         {
-          accountInclude: [PUMP_AMM_PROGRAM],
+          accountInclude: DEX_PROGRAMS,
           failed: false,
         },
         {
@@ -163,7 +172,7 @@ class HeliusTradeStream {
     };
 
     this._ws.send(JSON.stringify(request));
-    logger.info('[HeliusWS] 📡 订阅 Pump AMM (%s)', PUMP_AMM_PROGRAM.slice(0, 8) + '...');
+    logger.info('[HeliusWS] 📡 订阅 %d 个 DEX Programs (Pump/Raydium/Orca/Meteora)', DEX_PROGRAMS.length);
   }
 
   // ── Token 注册（不发送额外订阅，只注册回调） ────────────────
@@ -196,7 +205,7 @@ class HeliusTradeStream {
     // 订阅确认
     if (msg.id && msg.result !== undefined) {
       this._subId = msg.result;
-      logger.info('[HeliusWS] ✅ Pump AMM 订阅确认，subId=%s', msg.result);
+      logger.info('[HeliusWS] ✅ DEX 订阅确认，subId=%s', msg.result);
       return;
     }
 
