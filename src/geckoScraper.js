@@ -34,7 +34,10 @@ let _running = false;
 // ── GeckoTerminal 抓取 ───────────────────────────────────────────
 
 async function fetchTrending() {
-  const url = `${GECKO_BASE}/networks/solana/trending_pools?include=base_token&page=1`;
+  // trending_pools 端点没有时间参数，无法区分6h/24h
+  // 改用 pools?order=h6_volume_usd_desc，按过去6小时成交量降序
+  // 等效于"6小时热度排名"
+  const url = `${GECKO_BASE}/networks/solana/pools?include=base_token&order=h6_volume_usd_desc&page=1`;
   const res = await fetch(url, {
     headers: {
       'Accept': 'application/json;version=20230302',
@@ -184,7 +187,7 @@ async function pushToWebhook(token) {
 
 async function poll() {
   if (!_running) return;
-  logger.info('[Gecko] 开始抓取 SOL trending...');
+  logger.info('[Gecko] 开始抓取 SOL 6h热度榜...');
 
   try {
     const json   = await fetchTrending();
@@ -237,7 +240,7 @@ function start() {
     return;
   }
 
-  logger.info('[Gecko] 启动 | 间隔=%ds | 前%d名 | age %.0f-%.0fh | FDV≥$%s | LP≥$%s',
+  logger.info('[Gecko] 启动(6h热度排名) | 间隔=%ds | 前%d名 | age %.0f-%.0fh | FDV≥$%s | LP≥$%s',
     POLL_INTERVAL / 1000, TOP_N,
     MIN_AGE_HOURS, MAX_AGE_HOURS,
     MIN_FDV.toLocaleString(), MIN_LP.toLocaleString());
