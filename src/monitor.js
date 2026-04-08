@@ -250,9 +250,12 @@ class TokenMonitor extends EventEmitter {
       await this.removeToken(address, `LP_TOO_LOW($${Math.round(lp)})`);
       return;
     }
+<<<<<<< HEAD
     // 存储最新 FDV/LP 供 Dashboard 显示
     if (Number.isFinite(fdv)) state.latestFdv = fdv;
     if (Number.isFinite(lp))  state.latestLp  = lp;
+=======
+>>>>>>> 3aec697e9f285a4539fd532593291b412281bd01
 
     // 4. 记录 tick（仅 Birdeye USD 价格，不含链上 SOL 计价数据）
     const tick = { price, ts: now };
