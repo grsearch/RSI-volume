@@ -16,7 +16,7 @@ const wsHub     = require('./wsHub');
 const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
-const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);  // 延长：15→30分钟
+const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);  // 监控时长60分钟
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线

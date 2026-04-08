@@ -13,6 +13,7 @@ const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
 const webhookRouter   = require('./routes/webhook');
+const gmgnScraper     = require('./gmgnScraper');
 const dashboardRouter = require('./routes/dashboard');
 
 const PORT    = parseInt(process.env.PORT || '3001', 10);
@@ -79,6 +80,7 @@ server.listen(PORT, () => {
 
   monitor.start();
   reporter.scheduleDaily(() => monitor.getAllTradeRecords());
+  gmgnScraper.start();  // GMGN 趋势榜抓取
 });
 
 // 优雅退出
@@ -87,6 +89,7 @@ process.on('SIGINT',  graceful);
 
 async function graceful() {
   logger.info('[Main] 收到退出信号，清理...');
+  await gmgnScraper.stop();
   monitor.stop();
   const tokens = monitor.getTokens();
   await Promise.allSettled(tokens.map(t => monitor.removeToken(t.address, 'SHUTDOWN')));
