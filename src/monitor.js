@@ -20,7 +20,7 @@ const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
 const LP_EXIT         = parseFloat(process.env.LP_EXIT_USD         || '5000');  // LP低于此值立即退出监控
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);
-const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '5',  10);  // 改为5秒K线
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '15', 10);  // 15秒K线
 const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
 const TRADE_SOL       = parseFloat(process.env.TRADE_SIZE_SOL      || '0.2');
 
@@ -261,8 +261,8 @@ class TokenMonitor extends EventEmitter {
       source: 'birdeye',
     });
 
-    // 只保留最近 10 分钟的 ticks（5秒K线频率高，节省内存）
-    const cutoff = now - 10 * 60 * 1000;
+    // 只保留最近 30 分钟的 ticks
+    const cutoff = now - 30 * 60 * 1000;
     while (state.ticks.length > 0 && state.ticks[0].ts < cutoff) state.ticks.shift();
 
     // 5. 聚合K线（纯 USD 价格 ticks → OHLCV）

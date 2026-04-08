@@ -14,8 +14,8 @@ const RSI_SELL        = parseFloat(process.env.RSI_SELL_LEVEL     || '70');
 const RSI_PANIC       = parseFloat(process.env.RSI_PANIC_LEVEL    || '80');
 const TAKE_PROFIT_PCT = parseFloat(process.env.TAKE_PROFIT_PCT    || '50');
 const STOP_LOSS_PCT   = parseFloat(process.env.STOP_LOSS_PCT      || '-10');
-const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '5',  10);
-const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '15', 10);
+const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '15', 10);  // 15秒K线
+const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '60', 10);  // 量能窗口1分钟
 const SKIP_FIRST      = parseInt(process.env.SKIP_FIRST_CANDLES   || '3',  10);
 const MIN_BUY_VOL     = parseFloat(process.env.MIN_BUY_VOL_SOL    || '2.0'); // 窗口内buyVolume至少2 SOL
 // 量能萎缩出场参数
