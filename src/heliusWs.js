@@ -279,59 +279,60 @@ class HeliusTradeStream {
 
     if (postEntries.length === 0) return null;
 
-    for (const postEntry of postEntries) {
-      const owner = postEntry.owner;
-      if (!owner) continue;
+    // signer（交易发起人）是 accountKeys[0]
+    // 我们只关心 signer 的 token 变化，忽略 pool/AMM 账户的变化
+    const signerKey = accountKeys[0];
+    const signerIndex = 0;  // signer 永远是第0个
 
-      // 跳过已知的 AMM/pool 地址（owner 通常在第 0 或 1 位，是 signer/fee payer）
-      // Pool 的 owner 一般不会是交易的 signer
-      const ownerIndex = accountKeys.indexOf(owner);
-      if (ownerIndex < 0 || ownerIndex >= preBalances.length) continue;
+    // 在 postTokenBalances 里找 signer 持有的 token 条目
+    // signer 的 ATA（关联代币账户）的 owner 就是 signer
+    const signerPost = postEntries.find(b => b.owner === signerKey);
+    const signerPre  = preEntries.find(b => b.owner === signerKey);
 
-      // 找 pre entry
-      const preEntry = preEntries.find(
-        b => b.accountIndex === postEntry.accountIndex || b.owner === owner
-      );
+    // 如果 signer 没有该 token 的余额变化，说明这不是用户 swap（可能是 LP 操作等），跳过
+    if (!signerPost) return null;
 
-      // token 변화량: uiAmount 는 신뢰 불가 (null이거나 잘못된 경우 많음)
-      // amount(raw 정수) / 10^decimals 로 직접 계산
-      const decimals = postEntry.uiTokenAmount?.decimals ?? 6;
-      const divisor  = Math.pow(10, decimals);
+    // 计算 signer 的 token 变化（raw integer / 10^decimals）
+    const decimals = signerPost.uiTokenAmount?.decimals ?? 6;
+    const divisor  = Math.pow(10, decimals);
 
-      const postRaw = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
-      const preRaw  = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
+    const postRaw = parseFloat(signerPost.uiTokenAmount?.amount ?? '0');
+    const preRaw  = signerPre ? parseFloat(signerPre.uiTokenAmount?.amount ?? '0') : 0;
 
-      if (!Number.isFinite(postRaw) || postRaw < 0) continue;
+    if (!Number.isFinite(postRaw)) return null;
 
-      const tokenDelta = (postRaw - preRaw) / divisor;
-      if (Math.abs(tokenDelta) < 1e-12) continue;
+    const tokenDelta = (postRaw - preRaw) / divisor;
+    if (Math.abs(tokenDelta) < 1e-12) return null;
 
-      // SOL 变化量（lamports → SOL）
-      const solDelta = (postBalances[ownerIndex] - preBalances[ownerIndex]) / LAMPORTS;
+    // signer 的 SOL 变化（lamports → SOL）
+    if (signerIndex >= preBalances.length || signerIndex >= postBalances.length) return null;
+    const solDelta = (postBalances[signerIndex] - preBalances[signerIndex]) / LAMPORTS;
 
-      // BUY: token↑ SOL↓  /  SELL: token↓ SOL↑
-      const isBuy  = tokenDelta > 0 && solDelta < 0;
-      const isSell = tokenDelta < 0 && solDelta > 0;
-      if (!isBuy && !isSell) continue;
+    // BUY: signer token↑ SOL↓  /  SELL: signer token↓ SOL↑
+    const isBuy  = tokenDelta > 0 && solDelta < 0;
+    const isSell = tokenDelta < 0 && solDelta > 0;
+    if (!isBuy && !isSell) return null;
 
-      const solAmount   = Math.abs(solDelta);
-      const tokenAmount = Math.abs(tokenDelta);
-      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;
-      const priceSol = solAmount / tokenAmount;
+    const solAmount   = Math.abs(solDelta);
+    const tokenAmount = Math.abs(tokenDelta);
+    if (solAmount < 1e-9 || tokenAmount < 1e-12) return null;
 
-      return {
-        ts: Date.now(),
-        signature,
-        tokenAddress,
-        owner,
-        isBuy,
-        solAmount,
-        tokenAmount,
-        priceSol,
-      };
-    }
+    const priceSol = solAmount / tokenAmount;
 
-    return null;
+    logger.debug('[HeliusWS] %s %s solAmount=%.6f tokenAmount=%.4f priceSol=%.12f',
+      tokenAddress.slice(0,8), isBuy ? 'BUY' : 'SELL',
+      solAmount, tokenAmount, priceSol);
+
+    return {
+      ts: Date.now(),
+      signature,
+      tokenAddress,
+      owner: signerKey,
+      isBuy,
+      solAmount,
+      tokenAmount,
+      priceSol,
+    };
   }
 
   // ── 状态查询 ──────────────────────────────────────────────
