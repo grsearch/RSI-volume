@@ -17,7 +17,7 @@ const VOL_WINDOW_SEC      = parseInt(process.env.VOL_WINDOW_SEC       || '60', 1
 const VOL_EXIT_CONSECUTIVE = parseInt(process.env.VOL_EXIT_CONSECUTIVE || '4', 10);
 const VOL_EXIT_RATIO      = parseFloat(process.env.VOL_EXIT_RATIO     || '1.0');
 const VOL_EXIT_LOOKBACK   = parseInt(process.env.VOL_EXIT_LOOKBACK    || '6', 10);
-const SKIP_FIRST_CANDLES  = parseInt(process.env.SKIP_FIRST_CANDLES   || '3', 10);
+const SKIP_FIRST_CANDLES  = parseInt(process.env.SKIP_FIRST_CANDLES   || '0', 10);
 
 // 止盈止损
 // TAKE_PROFIT_PCT 已移除（止盈条件删除）

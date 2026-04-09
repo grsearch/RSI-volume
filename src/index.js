@@ -43,6 +43,7 @@ app.get('/api/backtest/data', (_req, res) => {
 // ── 服务器 ────────────────────────────────────────────────────────
 const server = http.createServer(app);
 wsHub.init(server);
+wsHub.setMonitor(monitor);  // 新连接时推送当前状态
 
 server.listen(PORT, () => {
   logger.info('🚀 SOL RSI+量能 Monitor V2 启动，端口 %d', PORT);
