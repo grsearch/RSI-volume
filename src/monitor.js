@@ -443,12 +443,20 @@ class TokenMonitor extends EventEmitter {
 
     if (DRY_RUN) {
       // 空跑模式：用最新链上 SOL 价格计算模拟盈亏
+      if (!state.position) {
+        logger.warn('[Monitor] %s DRY_RUN SELL 时 position 已为 null，跳过', state.symbol);
+        state.exitSent = false;
+        return;
+      }
       const currentPrice = state.tokenPriceSol
         ?? (state.ticks.length > 0 ? state.ticks[state.ticks.length - 1].price : 0);
 
-      const solIn   = state.position?.solIn ?? TRADE_SOL;
-      const entryP  = state.position?.entryPriceSol ?? state.position?.entryPriceUsd ?? 0;
-      const solOut  = entryP > 0 ? solIn * (currentPrice / entryP) : 0;
+      const solIn   = state.position.solIn ?? TRADE_SOL;
+      // SOL计价盈亏：token数量 × (卖出价 - 买入价)
+      // token数量 = solIn / entryPriceSol
+      // solOut = token数量 × currentPrice = solIn / entryPriceSol × currentPrice
+      const entryP  = state.position.entryPriceSol ?? 0;
+      const solOut  = (entryP > 0 && currentPrice > 0) ? solIn * (currentPrice / entryP) : 0;
       const pnlPct  = entryP > 0 ? (currentPrice - entryP) / entryP * 100 : 0;
       const pnlSol  = solOut - solIn;
 
@@ -519,7 +527,7 @@ class TokenMonitor extends EventEmitter {
       symbol     : state.symbol,
       buyAt      : state.position.buyTime,
       buyTxid    : state.position.buyTxid,
-      entryPrice   : state.position.entryPriceSol,  // SOL 计价
+      entryPrice   : state.position.entryPriceSol ?? null,  // SOL 计价
       entryRsi     : state.position.entryRsi   ?? null,
       entryBuyVol  : state.position.entryBuyVol  ?? 0,
       entrySellVol : state.position.entrySellVol ?? 0,

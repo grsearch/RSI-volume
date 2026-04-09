@@ -370,7 +370,7 @@ function renderRecords(){
       : '-';
 
     // 卖出价：从 exitReason 或 solOut/solIn 估算显示
-    const exitPriceStr = d.exitPrice != null ? fmt(d.exitPrice, 8) : (isOpen ? '<span style="color:#58a6ff">持仓中</span>' : '-');
+    const exitPriceStr = d.exitPrice != null ? fmt(d.exitPrice, 10) : (isOpen ? '<span style="color:#58a6ff">持仓中</span>' : '-');
     const exitSolStr   = d.solOut != null ? d.solOut.toFixed(4) : (isOpen ? '...' : '-');
 
     const recRsiStr = d.entryRsi != null
