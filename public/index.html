@@ -90,7 +90,7 @@
     <div class="scrollable">
       <table id="tbl-tokens">
         <thead><tr>
-          <th>代币</th><th>合约</th><th>价格</th><th>FDV</th><th>LP</th><th>RSI</th><th>prevRSI</th>
+          <th>代币</th><th>合约</th><th>价格</th><th>Age</th><th>FDV</th><th>LP</th><th>RSI</th><th>prevRSI</th>
           <th>Buy/Sell</th><th>信号</th><th>原因</th><th>K线数</th><th>状态</th><th>到期</th>
         </tr></thead>
         <tbody></tbody>
@@ -143,6 +143,22 @@ function fmtDateTime(ts){ return ts ? new Date(ts).toLocaleString('zh',{month:'2
 function rsiClass(r){ return r>70?'rsi-hi':r<30?'rsi-lo':'rsi-mid' }
 function volClass(b,s){ return b>s?'vol-hi':'vol-lo' }
 function pnlClass(v){ return v==null?'':v>=0?'buy':'sell' }
+
+function fmtAge(addedAt) {
+  if (!addedAt) return '-';
+  const sec = Math.floor((Date.now() - addedAt) / 1000);
+  if (sec < 60)  return sec + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm' + (sec%60) + 's';
+  return Math.floor(sec/3600) + 'h' + Math.floor((sec%3600)/60) + 'm';
+}
+
+// 每秒刷新 age 列
+setInterval(() => {
+  document.querySelectorAll('[data-addedat]').forEach(td => {
+    const addedAt = parseInt(td.dataset.addedat);
+    if (addedAt) td.textContent = fmtAge(addedAt);
+  });
+}, 1000);
 
 function connect(){
   const ws = new WebSocket(`ws://${location.host}`);
@@ -237,6 +253,7 @@ function handleTick(d){
     <td>${d.symbol}</td>
     <td><a href="${gmgnUrl}" target="_blank" style="color:#58a6ff;text-decoration:none;font-size:11px" title="${d.address}">${addrShort}</a></td>
     <td>${fmt(d.price,8)}</td>
+    <td style="font-size:11px;color:#8b949e" data-addedat="${d.addedAt||''}">${fmtAge(d.addedAt)}</td>
     <td style="font-size:11px;color:#8b949e">${d.fdv!=null?'$'+Math.round(d.fdv).toLocaleString():'-'}</td>
     <td style="font-size:11px;color:#8b949e">${d.lp!=null?'$'+Math.round(d.lp).toLocaleString():'-'}</td>
     <td class="${rsiClass(rsi)}">${rsi==null?'预热':rsi.toFixed(2)}</td>

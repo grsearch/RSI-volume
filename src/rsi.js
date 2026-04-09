@@ -147,11 +147,19 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
                reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiNow.toFixed(1)})`, volume: volumeInfo };
     }
 
-    // 3. 止盈 / 止损
-    if (tokenState.position && tokenState.position.entryPriceUsd) {
-      const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
-                / tokenState.position.entryPriceUsd * 100;
-      if (pnl <= STOP_LOSS_PCT) {
+    // 3. 止损（优先用链上SOL价格，回退用 Birdeye USD）
+    if (tokenState.position) {
+      let pnl = null;
+      // 优先：链上SOL价格（更实时）
+      if (tokenState.position.entryPriceSol && tokenState.lastChainPriceSol) {
+        pnl = (tokenState.lastChainPriceSol - tokenState.position.entryPriceSol)
+            / tokenState.position.entryPriceSol * 100;
+      // 回退：Birdeye USD价格
+      } else if (tokenState.position.entryPriceUsd) {
+        pnl = (realtimePrice - tokenState.position.entryPriceUsd)
+            / tokenState.position.entryPriceUsd * 100;
+      }
+      if (pnl !== null && pnl <= STOP_LOSS_PCT) {
         updateState();
         return { rsi: rsiNow, prevRsi, signal: 'SELL',
                  reason: `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`, volume: volumeInfo };
