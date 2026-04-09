@@ -180,9 +180,18 @@ class TokenMonitor extends EventEmitter {
       isBuy    : trade.isBuy,
     });
 
-    // 이 token 전용 SOL 가격 업데이트 (다른 token에 의한 오염 없음)
-    if (trade.priceSol > 0) {
-      state.tokenPriceSol = trade.priceSol;
+    // 이 token 전용 SOL 가격 업데이트
+    if (trade.priceSol > 0 && Number.isFinite(trade.priceSol)) {
+      // 이전 가격 대비 100배 이상 차이나면 이상 데이터로 간주하고 무시
+      if (state.tokenPriceSol && (
+        trade.priceSol > state.tokenPriceSol * 100 ||
+        trade.priceSol < state.tokenPriceSol / 100
+      )) {
+        logger.warn('[Monitor] ⚠️ %s priceSol 이상 데이터 무시: prev=%s new=%s',
+          state.symbol, state.tokenPriceSol.toExponential(4), trade.priceSol.toExponential(4));
+      } else {
+        state.tokenPriceSol = trade.priceSol;
+      }
     }
 
     // 只保留最近 5 分钟（防止内存增长）
@@ -205,10 +214,12 @@ class TokenMonitor extends EventEmitter {
 
     // ── 链上成交触发止损（毫秒级，纯SOL计价，无延迟）────────────
     if (state.inPosition && !state.exitSent && trade.priceSol > 0) {
-      // 方案A：用本 token 的 SOL 价格（最快，无 Birdeye 延迟）
       if (state.position?.entryPriceSol) {
         const pnl = (trade.priceSol - state.position.entryPriceSol)
                   / state.position.entryPriceSol * 100;
+        logger.info('[Monitor] 止损检查 %s entry=%s cur=%s pnl=%.1f%%',
+          state.symbol, state.position.entryPriceSol.toExponential(4),
+          trade.priceSol.toExponential(4), pnl);
         if (pnl <= STOP_LOSS_PCT) {
           logger.warn('[Monitor] ⚡ %s SOL止损 %.10f→%.10f pnl=%.1f%%',
             state.symbol, state.position.entryPriceSol, trade.priceSol, pnl);
