@@ -279,6 +279,7 @@ class HeliusTradeStream {
 
     if (postEntries.length === 0) return null;
 
+<<<<<<< HEAD
     // 打印原始数据供调试（只打印前几笔）
     if (this._debugCount == null) this._debugCount = 0;
     if (this._debugCount < 10) {
@@ -350,6 +351,62 @@ class HeliusTradeStream {
         bestTrade.solAmount, bestTrade.tokenAmount, bestTrade.priceSol);
     }
     return bestTrade;
+=======
+    // signer（交易发起人）是 accountKeys[0]
+    // 我们只关心 signer 的 token 变化，忽略 pool/AMM 账户的变化
+    const signerKey = accountKeys[0];
+    const signerIndex = 0;  // signer 永远是第0个
+
+    // 在 postTokenBalances 里找 signer 持有的 token 条目
+    // signer 的 ATA（关联代币账户）的 owner 就是 signer
+    const signerPost = postEntries.find(b => b.owner === signerKey);
+    const signerPre  = preEntries.find(b => b.owner === signerKey);
+
+    // 如果 signer 没有该 token 的余额变化，说明这不是用户 swap（可能是 LP 操作等），跳过
+    if (!signerPost) return null;
+
+    // 计算 signer 的 token 变化（raw integer / 10^decimals）
+    const decimals = signerPost.uiTokenAmount?.decimals ?? 6;
+    const divisor  = Math.pow(10, decimals);
+
+    const postRaw = parseFloat(signerPost.uiTokenAmount?.amount ?? '0');
+    const preRaw  = signerPre ? parseFloat(signerPre.uiTokenAmount?.amount ?? '0') : 0;
+
+    if (!Number.isFinite(postRaw)) return null;
+
+    const tokenDelta = (postRaw - preRaw) / divisor;
+    if (Math.abs(tokenDelta) < 1e-12) return null;
+
+    // signer 的 SOL 变化（lamports → SOL）
+    if (signerIndex >= preBalances.length || signerIndex >= postBalances.length) return null;
+    const solDelta = (postBalances[signerIndex] - preBalances[signerIndex]) / LAMPORTS;
+
+    // BUY: signer token↑ SOL↓  /  SELL: signer token↓ SOL↑
+    const isBuy  = tokenDelta > 0 && solDelta < 0;
+    const isSell = tokenDelta < 0 && solDelta > 0;
+    if (!isBuy && !isSell) return null;
+
+    const solAmount   = Math.abs(solDelta);
+    const tokenAmount = Math.abs(tokenDelta);
+    if (solAmount < 1e-9 || tokenAmount < 1e-12) return null;
+
+    const priceSol = solAmount / tokenAmount;
+
+    logger.debug('[HeliusWS] %s %s solAmount=%.6f tokenAmount=%.4f priceSol=%.12f',
+      tokenAddress.slice(0,8), isBuy ? 'BUY' : 'SELL',
+      solAmount, tokenAmount, priceSol);
+
+    return {
+      ts: Date.now(),
+      signature,
+      tokenAddress,
+      owner: signerKey,
+      isBuy,
+      solAmount,
+      tokenAmount,
+      priceSol,
+    };
+>>>>>>> bb9895223bce2a0b48a2debe8759f414effa1526
   }
 
   // ── 状态查询 ──────────────────────────────────────────────
