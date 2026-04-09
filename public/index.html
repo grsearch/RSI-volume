@@ -263,12 +263,24 @@ function addRecordRow(d){
   const pnlSolStr = d.pnlSol != null
     ? (d.pnlSol >= 0 ? '+' : '') + d.pnlSol.toFixed(4)
     : '-';
+  const isOpen = !d.exitReason;
+  const pClass = p != null ? (p>=0?'buy':'sell') : '';
+  const exitPrice = d.exitPrice != null ? fmt(d.exitPrice,8) : (isOpen ? '<span style="color:#58a6ff">持仓中</span>' : '-');
+  const bvStr = (d.entryBuyVol||d.entrySellVol)
+    ? `<span style="color:#3fb950">${(d.entryBuyVol||0).toFixed(2)}</span>/<span style="color:#f85149">${(d.entrySellVol||0).toFixed(2)}</span>`
+    : '-';
+  tr.style.background = isOpen ? 'rgba(63,185,80,0.08)' : '';
   tr.innerHTML = `
-    <td>${d.symbol}</td>
+    <td style="font-weight:bold">${d.symbol}</td>
+    <td style="font-size:11px">${d.buyAt ? new Date(d.buyAt).toLocaleTimeString() : '-'}</td>
+    <td style="font-size:11px">${d.entryPrice != null ? fmt(d.entryPrice,8) : '-'}</td>
+    <td class="${d.entryRsi!=null?(d.entryRsi<=35?'rsi-lo':d.entryRsi>=70?'rsi-hi':'rsi-mid'):''}">${d.entryRsi != null ? d.entryRsi.toFixed(1) : '-'}</td>
+    <td style="font-size:11px">${bvStr}</td>
     <td>${d.solIn != null ? d.solIn.toFixed(4) : '-'}</td>
-    <td>${d.solOut != null ? d.solOut.toFixed(4) : '-'}</td>
-    <td class="${(d.pnlSol??0)>=0?'buy':'sell'}">${pnlSolStr}</td>
-    <td class="${p>=0?'buy':'sell'}">${p!=null?((p>=0?'+':'')+p.toFixed(2)+'%'):'-'}</td>
+    <td style="font-size:11px">${exitPrice}</td>
+    <td>${d.solOut != null ? d.solOut.toFixed(4) : (isOpen ? '...' : '-')}</td>
+    <td class="${pClass}">${pnlSolStr}</td>
+    <td class="${pClass}">${p!=null?((p>=0?'+':'')+p.toFixed(2)+'%'):'-'}</td>
     <td>${fmtExitReason(d.exitReason)}</td>
   `;
   tbody.prepend(tr);

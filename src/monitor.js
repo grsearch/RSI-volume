@@ -16,7 +16,7 @@ const wsHub     = require('./wsHub');
 const dataStore = require('./dataStore');
 const heliusWs  = require('./heliusWs');
 
-const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);
+const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '30', 10);
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000');
 const LP_EXIT         = parseFloat(process.env.LP_EXIT_USD         || '5000');
 const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',   10);
