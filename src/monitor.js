@@ -100,6 +100,8 @@ class TokenMonitor extends EventEmitter {
       addedAt       : now,
       expiresAt     : now + MONITOR_MINUTES * 60 * 1000,
       ticks         : [],
+      latestFdv          : null,
+      latestLp           : null,
       inPosition    : false,
       position      : null,
       tradeCount    : 0,
@@ -195,6 +197,27 @@ class TokenMonitor extends EventEmitter {
       source   : 'helius',
     });
 
+    // ── 链上成交触发止损检查（毫秒级响应）─────────────────────
+    // 每次收到该 token 的链上成交时，立即用最新 Birdeye USD 价格检查止损
+    // 避免等待下一次 1秒轮询，大幅提升止损响应速度
+    if (trade.priceSol > 0 && state.inPosition && !state.exitSent
+        && state.position?.entryPriceUsd) {
+      // 用 state.ticks 里最新的 USD 价格（Birdeye 最后一次轮询的价格）
+      const latestUsd = state.ticks.length > 0
+        ? state.ticks[state.ticks.length - 1].price
+        : null;
+      if (latestUsd && latestUsd > 0) {
+        const pnl = (latestUsd - state.position.entryPriceUsd)
+                  / state.position.entryPriceUsd * 100;
+        if (pnl <= STOP_LOSS_PCT) {
+          logger.warn('[Monitor] ⚡ %s 链上触发止损 USD:%.8f→%.8f pnl=%.1f%%',
+            state.symbol, state.position.entryPriceUsd, latestUsd, pnl);
+          setImmediate(() => this._doSellExit(state,
+            `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`));
+        }
+      }
+    }
+
     logger.debug('[HeliusTrade] %s %s %.4f SOL @ %.10f (%s)',
       state.symbol,
       trade.isBuy ? 'BUY' : 'SELL',
@@ -248,6 +271,9 @@ class TokenMonitor extends EventEmitter {
       await this.removeToken(address, `LP_TOO_LOW($${Math.round(lp)})`);
       return;
     }
+    // 存储最新 FDV/LP 供 Dashboard 显示
+    if (Number.isFinite(fdv)) state.latestFdv = fdv;
+    if (Number.isFinite(lp))  state.latestLp  = lp;
 
     // 4. 记录 tick（仅 Birdeye USD 价格，不含链上 SOL 计价数据）
     const tick = { price, ts: now };
@@ -325,7 +351,9 @@ class TokenMonitor extends EventEmitter {
       address,
       symbol  : state.symbol,
       price,
-      fdv,
+      fdv     : state.latestFdv,
+      lp      : state.latestLp,
+      addedAt : state.addedAt,
       rsi     : Number.isFinite(rsi) ? parseFloat(rsi.toFixed(2)) : null,
       prevRsi : Number.isFinite(prevRsi) ? parseFloat(prevRsi.toFixed(2)) : null,
       signal,
@@ -348,7 +376,22 @@ class TokenMonitor extends EventEmitter {
         const remain = Math.ceil((state._cooldownUntil - Date.now()) / 1000);
         logger.debug('[Monitor] %s 冷却中，还剩 %ds', state.symbol, remain);
       } else {
-        await this._doBuy(state, price, reason, rsi, volume);
+        // 买入前强制刷新 FDV/LP，不用缓存
+        birdeye.clearCache(address);
+        const { fdv: freshFdv, lp: freshLp } = await birdeye.getFdv(address).catch(() => ({ fdv: null, lp: null }));
+        if (freshFdv !== null) state.latestFdv = freshFdv;
+        if (freshLp  !== null) state.latestLp  = freshLp;
+
+        const fdvFail = Number.isFinite(freshFdv) && FDV_EXIT > 0 && freshFdv < FDV_EXIT;
+        const lpFail  = Number.isFinite(freshLp)  && LP_EXIT  > 0 && freshLp  < LP_EXIT;
+        if (fdvFail || lpFail) {
+          logger.warn('[Monitor] 🚫 %s 买入前检查不通过: FDV=$%s LP=$%s，跳过买入',
+            state.symbol,
+            freshFdv != null ? Math.round(freshFdv) : '?',
+            freshLp  != null ? Math.round(freshLp)  : '?');
+        } else {
+          await this._doBuy(state, price, reason, rsi, volume);
+        }
       }
     } else if (signal === 'SELL' && state.inPosition) {
       await this._doSellExit(state, reason);

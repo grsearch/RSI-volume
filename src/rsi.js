@@ -12,7 +12,6 @@ const RSI_PERIOD      = parseInt(process.env.RSI_PERIOD          || '7',  10);
 const RSI_BUY         = parseFloat(process.env.RSI_BUY_LEVEL     || '30');
 const RSI_SELL        = parseFloat(process.env.RSI_SELL_LEVEL     || '70');
 const RSI_PANIC       = parseFloat(process.env.RSI_PANIC_LEVEL    || '80');
-const TAKE_PROFIT_PCT = parseFloat(process.env.TAKE_PROFIT_PCT    || '50');
 const STOP_LOSS_PCT   = parseFloat(process.env.STOP_LOSS_PCT      || '-10');
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC   || '15', 10);  // 15秒K线
 const VOL_WIN_SEC     = parseInt(process.env.VOL_WINDOW_SEC       || '60', 10);  // 量能窗口1分钟
@@ -63,6 +62,21 @@ function stepRSI(avgGain, avgLoss, lastClose, newPrice, period) {
 }
 
 // ── 量能统计 ─────────────────────────────────────────────────────
+
+// 直接从 chainTrades 按时间窗口统计（最精确，不受K线对齐误差影响）
+function getVolumeFromChainTrades(chainTrades, windowSec) {
+  if (!chainTrades || chainTrades.length === 0) {
+    return { buy: 0, sell: 0, total: 0 };
+  }
+  const cutoff = Date.now() - windowSec * 1000;
+  let buy = 0, sell = 0;
+  for (const t of chainTrades) {
+    if (t.ts < cutoff) continue;
+    if (t.isBuy) buy  += (t.solAmount || 0);
+    else         sell += (t.solAmount || 0);
+  }
+  return { buy, sell, total: buy + sell };
+}
 
 function getVolume(candles) {
   let buy = 0, sell = 0;
@@ -118,9 +132,8 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
 
   const currentCandle = tokenState._currentCandle || null;
 
-  // 量能窗口（用于广播）
-  const winCandles = getWindowCandles(closedCandles, currentCandle, VOL_WIN_SEC);
-  const winVol     = getVolume(winCandles);
+  // 量能窗口（直接从 chainTrades 统计，更精确）
+  const winVol = getVolumeFromChainTrades(tokenState.chainTrades, VOL_WIN_SEC);
   const volumeInfo = {
     buyVol   : winVol.buy,
     sellVol  : winVol.sell,
@@ -148,15 +161,10 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
                reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiNow.toFixed(1)})`, volume: volumeInfo };
     }
 
-    // 3. 止盈 / 止损
-    if (tokenState.position && tokenState.position.entryPriceUsd) {
+    // 3. 止损（Birdeye USD价格，1秒轮询；链上成交时另有触发路径）
+    if (tokenState.position?.entryPriceUsd) {
       const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
                 / tokenState.position.entryPriceUsd * 100;
-      if (pnl >= TAKE_PROFIT_PCT) {
-        updateState();
-        return { rsi: rsiNow, prevRsi, signal: 'SELL',
-                 reason: `TAKE_PROFIT(+${pnl.toFixed(1)}%≥${TAKE_PROFIT_PCT}%)`, volume: volumeInfo };
-      }
       if (pnl <= STOP_LOSS_PCT) {
         updateState();
         return { rsi: rsiNow, prevRsi, signal: 'SELL',
@@ -188,7 +196,7 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
       && rsiNow <= RSI_BUY
       && lastCandleTs !== (tokenState._lastBuyCandle || -1)) {
 
-    const bv = getVolume(getWindowCandles(closedCandles, currentCandle, VOL_WIN_SEC));
+    const bv = getVolumeFromChainTrades(tokenState.chainTrades, VOL_WIN_SEC);
 
     // 无链上数据 → 拒绝
     if (bv.total === 0) {
@@ -277,7 +285,7 @@ module.exports = {
   stepRSI,
   CONFIG: {
     RSI_PERIOD, RSI_BUY, RSI_SELL, RSI_PANIC,
-    TAKE_PROFIT_PCT, STOP_LOSS_PCT,
+    STOP_LOSS_PCT,
     KLINE_SEC, VOL_WIN_SEC, SKIP_FIRST,
     VOL_EXIT_CONSECUTIVE, VOL_EXIT_RATIO, VOL_EXIT_LOOKBACK,
   },
