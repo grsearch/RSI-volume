@@ -44,8 +44,7 @@ const DEX_PROGRAMS = [
   '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM v4
   'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', // Raydium CLMM
   'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C', // Raydium CPMM
-  '9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP', // Orca Whirlpool (legacy)
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool v2
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
   'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',  // Meteora DLMM
   'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EkSX2zNX', // Meteora Pools
 ];
@@ -172,7 +171,7 @@ class HeliusTradeStream {
     };
 
     this._ws.send(JSON.stringify(request));
-    logger.info('[HeliusWS] 📡 订阅 %d 个 DEX Programs (Pump/Raydium/Orca/Meteora)', DEX_PROGRAMS.length);
+    logger.info('[HeliusWS] 📡 订阅 %d 个 DEX Programs', DEX_PROGRAMS.length);
   }
 
   // ── Token 注册（不发送额外订阅，只注册回调） ────────────────
@@ -264,12 +263,8 @@ class HeliusTradeStream {
     const postTokenBals = meta.postTokenBalances  || [];
     const preBalances   = meta.preBalances  || [];
     const postBalances  = meta.postBalances || [];
-    const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
-    const postEntries = postTokenBals.filter(b => b.mint === tokenAddress);
-    const preEntries  = preTokenBals.filter(b => b.mint === tokenAddress);
-    if (postEntries.length === 0) return null;
-
+    // account keys
     let accountKeys = [];
     if (txData?.message?.accountKeys) {
       accountKeys = txData.message.accountKeys.map(k =>
@@ -277,105 +272,61 @@ class HeliusTradeStream {
       );
     }
 
-    // ── Token 변화량 계산（전 계정 중 변화량 최소 = 사용자 ATA）──
-    let bestEntry = null;
-    let bestTokenAmount = Infinity;
+    // 找该 token 的 post entries
+    const postEntries = postTokenBals.filter(b => b.mint === tokenAddress);
+    const preEntries  = preTokenBals.filter(b => b.mint === tokenAddress);
+
+    if (postEntries.length === 0) return null;
+
     for (const postEntry of postEntries) {
-      const preEntry = preEntries.find(p => p.accountIndex === postEntry.accountIndex);
-      const dec     = postEntry.uiTokenAmount?.decimals ?? 6;
-      const postRaw = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
-      const preRaw  = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
-      if (!Number.isFinite(postRaw)) continue;
-      const tokenDelta = (postRaw - preRaw) / Math.pow(10, dec);
+      const owner = postEntry.owner;
+      if (!owner) continue;
+
+      // 跳过已知的 AMM/pool 地址（owner 通常在第 0 或 1 位，是 signer/fee payer）
+      // Pool 的 owner 一般不会是交易的 signer
+      const ownerIndex = accountKeys.indexOf(owner);
+      if (ownerIndex < 0 || ownerIndex >= preBalances.length) continue;
+
+      // 找 pre entry
+      const preEntry = preEntries.find(
+        b => b.accountIndex === postEntry.accountIndex || b.owner === owner
+      );
+
+      // token 变化量
+      const postAmt = parseFloat(postEntry.uiTokenAmount?.uiAmount ?? '0');
+      const preAmt  = preEntry ? parseFloat(preEntry.uiTokenAmount?.uiAmount ?? '0') : 0;
+      const tokenDelta = postAmt - preAmt;
+
+      if (Math.abs(tokenDelta) < 1e-12) continue;
+
+      // SOL 变化量（lamports → SOL）
+      const solDelta = (postBalances[ownerIndex] - preBalances[ownerIndex]) / LAMPORTS;
+
+      // 判断方向
+      // BUY: token↑ SOL↓（用户花 SOL 买 token）
+      // SELL: token↓ SOL↑（用户卖 token 得 SOL）
+      const isBuy  = tokenDelta > 0 && solDelta < 0;
+      const isSell = tokenDelta < 0 && solDelta > 0;
+
+      if (!isBuy && !isSell) continue;
+
+      const solAmount   = Math.abs(solDelta);
       const tokenAmount = Math.abs(tokenDelta);
-      if (tokenAmount < 1e-12) continue;
-      if (tokenAmount < bestTokenAmount) {
-        bestTokenAmount = tokenAmount;
-        bestEntry = { postEntry, preEntry, tokenDelta, tokenAmount };
-      }
-    }
-    if (!bestEntry) return null;
+      const priceSol    = tokenAmount > 0 ? solAmount / tokenAmount : 0;
 
-    const { tokenDelta, tokenAmount } = bestEntry;
-    // token↑ = BUY 방향, token↓ = SELL 방향
-    const tokenIsBuy = tokenDelta > 0;
-
-    // ── SOL 금액 계산: 3단계 우선순위 ───────────────────────────
-
-    // [1] 사용자 WSOL 계정 (Pump AMM + Raydium/Orca 모두 WSOL 사용)
-    //     사용자 WSOL 계정 = tokenOwner 가 동일한 WSOL 계정
-    const tokenOwner = bestEntry.postEntry.owner;
-    const wsolPostAll = postTokenBals.filter(b => b.mint === WSOL_MINT);
-    const wsolPreAll  = preTokenBals.filter(b => b.mint === WSOL_MINT);
-
-    // 사용자 소유 WSOL 계정 찾기
-    const userWsolPost = wsolPostAll.find(b => b.owner === tokenOwner);
-    const userWsolPre  = wsolPreAll.find(b =>
-      b.owner === tokenOwner ||
-      (userWsolPost && b.accountIndex === userWsolPost.accountIndex)
-    );
-
-    let solAmount, isBuy;
-
-    if (userWsolPost) {
-      const wDec   = userWsolPost.uiTokenAmount?.decimals ?? 9;
-      const wPost  = parseFloat(userWsolPost.uiTokenAmount?.amount ?? '0');
-      const wPre   = userWsolPre ? parseFloat(userWsolPre.uiTokenAmount?.amount ?? '0') : 0;
-      const wDelta = (wPost - wPre) / Math.pow(10, wDec);
-      if (Math.abs(wDelta) > 1e-9) {
-        solAmount = Math.abs(wDelta);
-        isBuy     = wDelta < 0; // WSOL 감소 = SOL로 token 구매
-        // 방향 검증
-        if (isBuy !== tokenIsBuy) {
-          solAmount = undefined; // 방향 불일치 → 다음 방법 시도
-        }
-      }
+      return {
+        ts: Date.now(),
+        signature,
+        tokenAddress,
+        owner,
+        isBuy,
+        solAmount,
+        tokenAmount,
+        priceSol,
+      };
     }
 
-    // [2] 사용자 native SOL 잔액 변화 (Pump bonding curve 등 native SOL 직접 사용)
-    if (solAmount === undefined) {
-      const ownerIdx = accountKeys.indexOf(tokenOwner);
-      if (ownerIdx >= 0 && ownerIdx < preBalances.length) {
-        const nativeDelta = (postBalances[ownerIdx] - preBalances[ownerIdx]) / LAMPORTS;
-        const nativeIsBuy  = nativeDelta < 0 && tokenIsBuy;
-        const nativeIsSell = nativeDelta > 0 && !tokenIsBuy;
-        if (nativeIsBuy || nativeIsSell) {
-          solAmount = Math.abs(nativeDelta);
-          isBuy     = tokenIsBuy;
-        }
-      }
-    }
-
-    // [3] 최후 수단: fee payer(accountKeys[0])의 native SOL 변화
-    //     수수료 포함되지만 방향은 신뢰 가능
-    if (solAmount === undefined && preBalances.length > 0) {
-      const nativeDelta = (postBalances[0] - preBalances[0]) / LAMPORTS;
-      const nativeIsBuy  = nativeDelta < 0 && tokenIsBuy;
-      const nativeIsSell = nativeDelta > 0 && !tokenIsBuy;
-      if (nativeIsBuy || nativeIsSell) {
-        solAmount = Math.abs(nativeDelta);
-        isBuy     = tokenIsBuy;
-      }
-    }
-
-    if (!solAmount || solAmount < 1e-9 || tokenAmount < 1e-12) return null;
-
-    const priceSol = solAmount / tokenAmount;
-    logger.debug('[HeliusWS] %s %s sol=%s tok=%s price=%s (owner=%s)',
-      tokenAddress.slice(0,8), isBuy ? 'BUY' : 'SELL',
-      solAmount.toExponential(4), tokenAmount.toExponential(4),
-      priceSol.toExponential(4), (tokenOwner||'').slice(0,8));
-
-    return {
-      ts: Date.now(),
-      signature,
-      tokenAddress,
-      owner: tokenOwner,
-      isBuy,
-      solAmount,
-      tokenAmount,
-      priceSol,
-    };
+    return null;
   }
 
   // ── 状态查询 ──────────────────────────────────────────────

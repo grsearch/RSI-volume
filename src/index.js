@@ -46,7 +46,7 @@ wsHub.init(server);
 
 server.listen(PORT, () => {
   logger.info('🚀 SOL RSI+量能 Monitor V2 启动，端口 %d', PORT);
-  logger.info('   模式: %s  价格计价: SOL（链上实时）', DRY_RUN ? '🔵 空跑(DRY_RUN)' : '🔴 实盘(LIVE)');
+  logger.info('   模式: %s', DRY_RUN ? '🔵 空跑(DRY_RUN)' : '🔴 实盘(LIVE)');
   logger.info('   K线=%ds  轮询=%ds  RSI周期=%s  买≤%s  卖≥%s  恐慌>%s',
     process.env.KLINE_INTERVAL_SEC || 15,
     process.env.PRICE_POLL_SEC     || 1,
