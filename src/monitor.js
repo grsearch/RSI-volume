@@ -19,7 +19,7 @@ const heliusWs  = require('./heliusWs');
 const MONITOR_MINUTES = parseInt(process.env.TOKEN_MAX_AGE_MINUTES || '60', 10);  // 监控时长60分钟
 const FDV_EXIT        = parseFloat(process.env.FDV_EXIT_USD        || '10000'); // FDV低于此值立即退出监控
 const LP_EXIT         = parseFloat(process.env.LP_EXIT_USD         || '5000');  // LP低于此值立即退出监控
-const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '5',  10);  // FDV/LP 체크 주기（초）, 가격 폴링 불필요해서 5초로
+const POLL_SEC        = parseInt(process.env.PRICE_POLL_SEC        || '1',  10);  // 1秒轮询，保证止损响应速度
 const KLINE_SEC       = parseInt(process.env.KLINE_INTERVAL_SEC    || '15', 10);  // 15秒K线
 const DRY_RUN         = (process.env.DRY_RUN ?? 'true') !== 'false';  // 기본값 true=공매도 안전
 const TRADE_SOL       = parseFloat(process.env.TRADE_SIZE_SOL      || '0.2');
@@ -281,13 +281,23 @@ class TokenMonitor extends EventEmitter {
     if (Number.isFinite(fdv)) state.latestFdv = fdv;
     if (Number.isFinite(lp))  state.latestLp  = lp;
 
-    // 3. 用链上 SOL 价格构建 ticks（替代 Birdeye USD）
-    // tokenPriceSol 由 _onChainTrade 实时更新
+    // 3. 用链上 SOL 价格构建 ticks
     const price = state.tokenPriceSol;
     if (!price || price <= 0) {
-      // 还没收到链上价格，等待
       logger.debug('[Monitor] %s 等待链上价格...', state.symbol);
       return;
+    }
+
+    // 3b. 轮询止损检查（补充链上回调可能遗漏的情况）
+    if (state.inPosition && !state.exitSent && state.position?.entryPriceSol) {
+      const pnl = (price - state.position.entryPriceSol)
+                / state.position.entryPriceSol * 100;
+      if (pnl <= STOP_LOSS_PCT) {
+        logger.warn('[Monitor] 🛑 %s 轮询止损 %.10f→%.10f pnl=%.1f%%',
+          state.symbol, state.position.entryPriceSol, price, pnl);
+        await this._doSellExit(state, `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`);
+        return;
+      }
     }
 
     const tick = { price, ts: now };
