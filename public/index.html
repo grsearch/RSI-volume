@@ -90,7 +90,7 @@
     <div class="scrollable">
       <table id="tbl-tokens">
         <thead><tr>
-          <th>代币</th><th>合约</th><th>价格</th><th>Age</th><th>FDV</th><th>LP</th><th>RSI</th><th>prevRSI</th>
+          <th>代币</th><th>合约</th><th>价格(SOL)</th><th>Age</th><th>FDV</th><th>LP</th><th>RSI</th><th>prevRSI</th>
           <th>Buy/Sell</th><th>信号</th><th>原因</th><th>K线数</th><th>状态</th><th>到期</th>
         </tr></thead>
         <tbody></tbody>
@@ -252,7 +252,7 @@ function handleTick(d){
   tr.innerHTML = `
     <td>${d.symbol}</td>
     <td><a href="${gmgnUrl}" target="_blank" style="color:#58a6ff;text-decoration:none;font-size:11px" title="${d.address}">${addrShort}</a></td>
-    <td>${fmt(d.price,8)}</td>
+    <td style="font-size:11px">${fmt(d.price,10)}</td>
     <td style="font-size:11px;color:#8b949e" data-addedat="${d.addedAt||''}">${fmtAge(d.addedAt)}</td>
     <td style="font-size:11px;color:#8b949e">${d.fdv!=null?'$'+Math.round(d.fdv).toLocaleString():'-'}</td>
     <td style="font-size:11px;color:#8b949e">${d.lp!=null?'$'+Math.round(d.lp).toLocaleString():'-'}</td>
@@ -320,7 +320,7 @@ function addLogRow(d){
     <td style="color:#8b949e;font-size:11px;white-space:nowrap">${fmtTime(d.ts)}</td>
     <td>${typeHtml}</td>
     <td style="font-weight:bold">${d.symbol}</td>
-    <td>${fmt(d.price,8)}</td>
+    <td style="font-size:11px">${fmt(d.price,10)}</td>
     <td>${rsiStr}</td>
     <td style="font-size:11px">${bvStr}</td>
     <td style="font-size:11px">${solStr}</td>
@@ -381,7 +381,7 @@ function renderRecords(){
     tr.innerHTML = `
       <td style="font-weight:bold">${d.symbol}${isOpen ? ' <span class="badge green" style="font-size:9px">●</span>' : ''}</td>
       <td style="color:#8b949e;font-size:11px;white-space:nowrap">${fmtDateTime(d.buyAt)}</td>
-      <td>${d.entryPrice != null ? fmt(d.entryPrice,8) : '-'}</td>
+      <td>${d.entryPrice != null ? fmt(d.entryPrice,10) : '-'}</td>
       <td>${recRsiStr}</td>
       <td style="font-size:11px">${recBvStr}</td>
       <td>${d.solIn != null ? d.solIn.toFixed(4) : '-'}</td>

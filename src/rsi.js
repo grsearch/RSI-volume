@@ -161,10 +161,10 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
                reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiNow.toFixed(1)})`, volume: volumeInfo };
     }
 
-    // 3. 止损（Birdeye USD价格，1秒轮询；链上成交时另有触发路径）
-    if (tokenState.position?.entryPriceUsd) {
-      const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
-                / tokenState.position.entryPriceUsd * 100;
+    // 3. 止损（SOL 计价，realtimePrice 已是 SOL 价格）
+    if (tokenState.position?.entryPriceSol) {
+      const pnl = (realtimePrice - tokenState.position.entryPriceSol)
+                / tokenState.position.entryPriceSol * 100;
       if (pnl <= STOP_LOSS_PCT) {
         updateState();
         return { rsi: rsiNow, prevRsi, signal: 'SELL',
