@@ -293,27 +293,33 @@ class HeliusTradeStream {
         b => b.accountIndex === postEntry.accountIndex || b.owner === owner
       );
 
-      // token 变化量
-      const postAmt = parseFloat(postEntry.uiTokenAmount?.uiAmount ?? '0');
-      const preAmt  = preEntry ? parseFloat(preEntry.uiTokenAmount?.uiAmount ?? '0') : 0;
-      const tokenDelta = postAmt - preAmt;
+      // token 变化量（uiAmount 已含 decimals，直接用）
+      const postUiAmt = postEntry.uiTokenAmount?.uiAmount;
+      const preUiAmt  = preEntry?.uiTokenAmount?.uiAmount;
+      // uiAmount 为 null 时用 amount / 10^decimals 换算
+      const decimals  = postEntry.uiTokenAmount?.decimals ?? 6;
+      const postAmt = postUiAmt != null
+        ? parseFloat(postUiAmt)
+        : (parseFloat(postEntry.uiTokenAmount?.amount ?? '0') / Math.pow(10, decimals));
+      const preAmt = preUiAmt != null
+        ? parseFloat(preUiAmt)
+        : (preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') / Math.pow(10, decimals) : 0);
 
+      const tokenDelta = postAmt - preAmt;
       if (Math.abs(tokenDelta) < 1e-12) continue;
 
       // SOL 变化量（lamports → SOL）
       const solDelta = (postBalances[ownerIndex] - preBalances[ownerIndex]) / LAMPORTS;
 
-      // 判断方向
-      // BUY: token↑ SOL↓（用户花 SOL 买 token）
-      // SELL: token↓ SOL↑（用户卖 token 得 SOL）
+      // BUY: token↑ SOL↓  /  SELL: token↓ SOL↑
       const isBuy  = tokenDelta > 0 && solDelta < 0;
       const isSell = tokenDelta < 0 && solDelta > 0;
-
       if (!isBuy && !isSell) continue;
 
       const solAmount   = Math.abs(solDelta);
       const tokenAmount = Math.abs(tokenDelta);
-      const priceSol    = tokenAmount > 0 ? solAmount / tokenAmount : 0;
+      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;  // 너무 작은 거래 스킵
+      const priceSol    = solAmount / tokenAmount;
 
       return {
         ts: Date.now(),

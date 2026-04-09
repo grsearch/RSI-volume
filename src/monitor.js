@@ -389,7 +389,12 @@ class TokenMonitor extends EventEmitter {
   // ── 交易执行 ────────────────────────────────────────────────────
 
   async _doBuy(state, price, reason, rsi, volume) {
-    logger.info('[Monitor] 🟢 BUY %s @ %.8f | %s | DRY_RUN=%s', state.symbol, price, reason, DRY_RUN);
+    // 가격 유효성 검사
+    if (!price || price <= 0 || !Number.isFinite(price)) {
+      logger.warn('[Monitor] ⚠️ %s 买入价格无效(%.10f)，跳过', state.symbol, price);
+      return;
+    }
+    logger.info('[Monitor] 🟢 BUY %s @ %.10f | %s | DRY_RUN=%s', state.symbol, price, reason, DRY_RUN);
     state.inPosition = true;
 
     if (DRY_RUN) {
@@ -462,13 +467,17 @@ class TokenMonitor extends EventEmitter {
         ?? (state.ticks.length > 0 ? state.ticks[state.ticks.length - 1].price : 0);
 
       const solIn   = state.position.solIn ?? TRADE_SOL;
-      // SOL计价盈亏：token数量 × (卖出价 - 买入价)
-      // token数量 = solIn / entryPriceSol
-      // solOut = token数量 × currentPrice = solIn / entryPriceSol × currentPrice
       const entryP  = state.position.entryPriceSol ?? 0;
-      const solOut  = (entryP > 0 && currentPrice > 0) ? solIn * (currentPrice / entryP) : 0;
+      // 유효성 검사: 비율이 너무 이상하면 0으로
+      const ratio   = (entryP > 0 && currentPrice > 0) ? currentPrice / entryP : 0;
+      // 비율이 0.001 ~ 1000 범위를 벗어나면 데이터 오류로 간주
+      const validRatio = ratio > 0.001 && ratio < 1000;
+      const solOut  = validRatio ? solIn * ratio : 0;
       const pnlPct  = entryP > 0 ? (currentPrice - entryP) / entryP * 100 : 0;
       const pnlSol  = solOut - solIn;
+      if (!validRatio) {
+        logger.warn('[Monitor] ⚠️ %s DRY_RUN 盈亏计算比例异常(%.6f)，solOut置0', state.symbol, ratio);
+      }
 
       state.inPosition = false;
       this._addTradeLog(state, { type: 'SELL', symbol: state.symbol, price: currentPrice, reason,
