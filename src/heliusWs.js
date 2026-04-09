@@ -266,34 +266,18 @@ class HeliusTradeStream {
     const postBalances  = meta.postBalances || [];
     const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
-    // 找该 token 的所有余额变化
     const postEntries = postTokenBals.filter(b => b.mint === tokenAddress);
     const preEntries  = preTokenBals.filter(b => b.mint === tokenAddress);
     if (postEntries.length === 0) return null;
 
-    // ── 方案1：用 WSOL token 账户计算 SOL 金额（最精确）──────────
-    // Raydium/Orca/Meteora 的 swap 通常通过 WSOL 账户而不是原生 SOL
-    // WSOL 账户变化量就是实际的 SOL 成交额，不受手续费等影响
-    const wsolPost = postTokenBals.filter(b => b.mint === WSOL_MINT);
-    const wsolPre  = preTokenBals.filter(b => b.mint === WSOL_MINT);
-
-    let solAmountFromWsol = null;
-    let wsolIsBuy = null;
-    for (const wp of wsolPost) {
-      const wp_pre = wsolPre.find(p => p.accountIndex === wp.accountIndex);
-      const wDec  = wp.uiTokenAmount?.decimals ?? 9;
-      const wPost = parseFloat(wp.uiTokenAmount?.amount ?? '0');
-      const wPre  = wp_pre ? parseFloat(wp_pre.uiTokenAmount?.amount ?? '0') : 0;
-      const wDelta = (wPost - wPre) / Math.pow(10, wDec);
-      if (Math.abs(wDelta) < 1e-9) continue;
-      // WSOL 减少 = 用户花 SOL 买 token (BUY)
-      // WSOL 增加 = 用户卖 token 得 SOL (SELL)
-      solAmountFromWsol = Math.abs(wDelta);
-      wsolIsBuy = wDelta < 0;
-      break;
+    let accountKeys = [];
+    if (txData?.message?.accountKeys) {
+      accountKeys = txData.message.accountKeys.map(k =>
+        typeof k === 'string' ? k : k.pubkey
+      );
     }
 
-    // 找 token 账户变化量最小的（用户 ATA，排除流动池大额变化）
+    // ── Token 변화량 계산（전 계정 중 변화량 최소 = 사용자 ATA）──
     let bestEntry = null;
     let bestTokenAmount = Infinity;
     for (const postEntry of postEntries) {
@@ -303,74 +287,90 @@ class HeliusTradeStream {
       const preRaw  = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
       if (!Number.isFinite(postRaw)) continue;
       const tokenDelta = (postRaw - preRaw) / Math.pow(10, dec);
-      if (Math.abs(tokenDelta) < 1e-12) continue;
       const tokenAmount = Math.abs(tokenDelta);
+      if (tokenAmount < 1e-12) continue;
       if (tokenAmount < bestTokenAmount) {
         bestTokenAmount = tokenAmount;
-        bestEntry = { postEntry, preEntry, tokenDelta, tokenAmount, dec };
+        bestEntry = { postEntry, preEntry, tokenDelta, tokenAmount };
       }
     }
     if (!bestEntry) return null;
 
     const { tokenDelta, tokenAmount } = bestEntry;
-    let isBuy, solAmount;
+    // token↑ = BUY 방향, token↓ = SELL 방향
+    const tokenIsBuy = tokenDelta > 0;
 
-    if (solAmountFromWsol !== null) {
-      // WSOL 方案：直接用 WSOL 变化量
-      solAmount = solAmountFromWsol;
-      isBuy     = wsolIsBuy;
-      // 验证方向一致性
-      if ((isBuy && tokenDelta <= 0) || (!isBuy && tokenDelta >= 0)) {
-        // 方向不一致，可能是 WSOL 账户属于 pool，用 native SOL 方案
-        solAmount = null;
+    // ── SOL 금액 계산: 3단계 우선순위 ───────────────────────────
+
+    // [1] 사용자 WSOL 계정 (Pump AMM + Raydium/Orca 모두 WSOL 사용)
+    //     사용자 WSOL 계정 = tokenOwner 가 동일한 WSOL 계정
+    const tokenOwner = bestEntry.postEntry.owner;
+    const wsolPostAll = postTokenBals.filter(b => b.mint === WSOL_MINT);
+    const wsolPreAll  = preTokenBals.filter(b => b.mint === WSOL_MINT);
+
+    // 사용자 소유 WSOL 계정 찾기
+    const userWsolPost = wsolPostAll.find(b => b.owner === tokenOwner);
+    const userWsolPre  = wsolPreAll.find(b =>
+      b.owner === tokenOwner ||
+      (userWsolPost && b.accountIndex === userWsolPost.accountIndex)
+    );
+
+    let solAmount, isBuy;
+
+    if (userWsolPost) {
+      const wDec   = userWsolPost.uiTokenAmount?.decimals ?? 9;
+      const wPost  = parseFloat(userWsolPost.uiTokenAmount?.amount ?? '0');
+      const wPre   = userWsolPre ? parseFloat(userWsolPre.uiTokenAmount?.amount ?? '0') : 0;
+      const wDelta = (wPost - wPre) / Math.pow(10, wDec);
+      if (Math.abs(wDelta) > 1e-9) {
+        solAmount = Math.abs(wDelta);
+        isBuy     = wDelta < 0; // WSOL 감소 = SOL로 token 구매
+        // 방향 검증
+        if (isBuy !== tokenIsBuy) {
+          solAmount = undefined; // 방향 불일치 → 다음 방법 시도
+        }
       }
     }
 
-    if (solAmount === null || solAmount === undefined) {
-      // ── 方案2：用 native SOL 余额变化 ──────────────────────────
-      // 遍历所有账户，找 SOL 变化与 token 变化方向一致的账户
-      let accountKeys = [];
-      if (txData?.message?.accountKeys) {
-        accountKeys = txData.message.accountKeys.map(k =>
-          typeof k === 'string' ? k : k.pubkey
-        );
-      }
-      const tokenOwner = bestEntry.postEntry.owner;
-      const ownerIdx   = accountKeys.indexOf(tokenOwner);
+    // [2] 사용자 native SOL 잔액 변화 (Pump bonding curve 등 native SOL 직접 사용)
+    if (solAmount === undefined) {
+      const ownerIdx = accountKeys.indexOf(tokenOwner);
       if (ownerIdx >= 0 && ownerIdx < preBalances.length) {
         const nativeDelta = (postBalances[ownerIdx] - preBalances[ownerIdx]) / LAMPORTS;
-        isBuy     = tokenDelta > 0 && nativeDelta < 0;
-        const isSell2 = tokenDelta < 0 && nativeDelta > 0;
-        if (isBuy || isSell2) {
+        const nativeIsBuy  = nativeDelta < 0 && tokenIsBuy;
+        const nativeIsSell = nativeDelta > 0 && !tokenIsBuy;
+        if (nativeIsBuy || nativeIsSell) {
           solAmount = Math.abs(nativeDelta);
-          if (!isBuy) isBuy = false;
-        }
-      }
-      // 如果还是找不到，尝试 accountKeys[0]（fee payer / signer）
-      if (solAmount === undefined) {
-        const nativeDelta = (postBalances[0] - preBalances[0]) / LAMPORTS;
-        isBuy     = tokenDelta > 0 && nativeDelta < 0;
-        const isSell2 = tokenDelta < 0 && nativeDelta > 0;
-        if (isBuy || isSell2) {
-          solAmount = Math.abs(nativeDelta);
-          if (!isBuy) isBuy = false;
+          isBuy     = tokenIsBuy;
         }
       }
     }
 
-    if (!solAmount || solAmount < 1e-9) return null;
-    if (tokenAmount < 1e-12) return null;
+    // [3] 최후 수단: fee payer(accountKeys[0])의 native SOL 변화
+    //     수수료 포함되지만 방향은 신뢰 가능
+    if (solAmount === undefined && preBalances.length > 0) {
+      const nativeDelta = (postBalances[0] - preBalances[0]) / LAMPORTS;
+      const nativeIsBuy  = nativeDelta < 0 && tokenIsBuy;
+      const nativeIsSell = nativeDelta > 0 && !tokenIsBuy;
+      if (nativeIsBuy || nativeIsSell) {
+        solAmount = Math.abs(nativeDelta);
+        isBuy     = tokenIsBuy;
+      }
+    }
+
+    if (!solAmount || solAmount < 1e-9 || tokenAmount < 1e-12) return null;
 
     const priceSol = solAmount / tokenAmount;
-    logger.debug('[HeliusWS] %s %s sol=%s tok=%s price=%s',
+    logger.debug('[HeliusWS] %s %s sol=%s tok=%s price=%s (owner=%s)',
       tokenAddress.slice(0,8), isBuy ? 'BUY' : 'SELL',
-      solAmount.toExponential(4), tokenAmount.toExponential(4), priceSol.toExponential(4));
+      solAmount.toExponential(4), tokenAmount.toExponential(4),
+      priceSol.toExponential(4), (tokenOwner||'').slice(0,8));
 
     return {
       ts: Date.now(),
       signature,
       tokenAddress,
-      owner: bestEntry.postEntry.owner,
+      owner: tokenOwner,
       isBuy,
       solAmount,
       tokenAmount,
