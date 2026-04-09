@@ -63,6 +63,21 @@ function stepRSI(avgGain, avgLoss, lastClose, newPrice, period) {
 
 // ── 量能统计 ─────────────────────────────────────────────────────
 
+// 直接从 chainTrades 按时间窗口统计（最精确，不受K线对齐误差影响）
+function getVolumeFromChainTrades(chainTrades, windowSec) {
+  if (!chainTrades || chainTrades.length === 0) {
+    return { buy: 0, sell: 0, total: 0 };
+  }
+  const cutoff = Date.now() - windowSec * 1000;
+  let buy = 0, sell = 0;
+  for (const t of chainTrades) {
+    if (t.ts < cutoff) continue;
+    if (t.isBuy) buy  += (t.solAmount || 0);
+    else         sell += (t.solAmount || 0);
+  }
+  return { buy, sell, total: buy + sell };
+}
+
 function getVolume(candles) {
   let buy = 0, sell = 0;
   for (const c of candles) {
@@ -117,9 +132,8 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
 
   const currentCandle = tokenState._currentCandle || null;
 
-  // 量能窗口（用于广播）
-  const winCandles = getWindowCandles(closedCandles, currentCandle, VOL_WIN_SEC);
-  const winVol     = getVolume(winCandles);
+  // 量能窗口（直接从 chainTrades 统计，更精确）
+  const winVol = getVolumeFromChainTrades(tokenState.chainTrades, VOL_WIN_SEC);
   const volumeInfo = {
     buyVol   : winVol.buy,
     sellVol  : winVol.sell,
@@ -147,10 +161,10 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
                reason: `RSI_CROSS_DOWN_70(${prevRsi.toFixed(1)}→${rsiNow.toFixed(1)})`, volume: volumeInfo };
     }
 
-    // 3. 止损（Birdeye USD价格，1秒轮询；链上成交时另有触发路径）
-    if (tokenState.position?.entryPriceUsd) {
-      const pnl = (realtimePrice - tokenState.position.entryPriceUsd)
-                / tokenState.position.entryPriceUsd * 100;
+    // 3. 止损（SOL 计价，realtimePrice 已是 SOL 价格）
+    if (tokenState.position?.entryPriceSol) {
+      const pnl = (realtimePrice - tokenState.position.entryPriceSol)
+                / tokenState.position.entryPriceSol * 100;
       if (pnl <= STOP_LOSS_PCT) {
         updateState();
         return { rsi: rsiNow, prevRsi, signal: 'SELL',
@@ -182,7 +196,7 @@ function evaluateSignal(closedCandles, realtimePrice, tokenState) {
       && rsiNow <= RSI_BUY
       && lastCandleTs !== (tokenState._lastBuyCandle || -1)) {
 
-    const bv = getVolume(getWindowCandles(closedCandles, currentCandle, VOL_WIN_SEC));
+    const bv = getVolumeFromChainTrades(tokenState.chainTrades, VOL_WIN_SEC);
 
     // 无链上数据 → 拒绝
     if (bv.total === 0) {

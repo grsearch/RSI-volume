@@ -279,55 +279,77 @@ class HeliusTradeStream {
 
     if (postEntries.length === 0) return null;
 
+    // 打印原始数据供调试（只打印前几笔）
+    if (this._debugCount == null) this._debugCount = 0;
+    if (this._debugCount < 10) {
+      this._debugCount++;
+      logger.info('[HeliusWS DEBUG] token=%s sig=%s', tokenAddress.slice(0,8), (signature||'').slice(0,12));
+      logger.info('[HeliusWS DEBUG] accountKeys[0..3]=%s', accountKeys.slice(0,3).join(','));
+      logger.info('[HeliusWS DEBUG] preBalances[0..3]=%j', preBalances.slice(0,3));
+      logger.info('[HeliusWS DEBUG] postBalances[0..3]=%j', postBalances.slice(0,3));
+      postEntries.forEach((e,i) => {
+        const pre = preEntries.find(p => p.accountIndex === e.accountIndex);
+        logger.info('[HeliusWS DEBUG] postEntry[%d] accIdx=%d owner=%s amount=%s uiAmount=%s decimals=%s',
+          i, e.accountIndex, (e.owner||'').slice(0,8),
+          e.uiTokenAmount?.amount, e.uiTokenAmount?.uiAmount, e.uiTokenAmount?.decimals);
+        if (pre) logger.info('[HeliusWS DEBUG]  preEntry[%d] accIdx=%d amount=%s uiAmount=%s',
+          i, pre.accountIndex, pre.uiTokenAmount?.amount, pre.uiTokenAmount?.uiAmount);
+      });
+    }
+
+    // ── 找最小的 token 变化量条目（用户的 ATA，不是流动池）──────
+    // 流动池的 token 变化量极大（整个池子），用户的变化量相对小
+    // 同时对应的 SOL 变化必须方向一致（BUY: token↑SOL↓, SELL: token↓SOL↑）
+    let bestTrade = null;
+    let bestTokenAmount = Infinity;
+
     for (const postEntry of postEntries) {
-      const owner = postEntry.owner;
-      if (!owner) continue;
+      const accIdx = postEntry.accountIndex;
+      if (accIdx >= preBalances.length || accIdx >= postBalances.length) continue;
 
-      // 跳过已知的 AMM/pool 地址（owner 通常在第 0 或 1 位，是 signer/fee payer）
-      // Pool 的 owner 一般不会是交易的 signer
-      const ownerIndex = accountKeys.indexOf(owner);
-      if (ownerIndex < 0 || ownerIndex >= preBalances.length) continue;
+      const preEntry = preEntries.find(p => p.accountIndex === accIdx);
 
-      // 找 pre entry
-      const preEntry = preEntries.find(
-        b => b.accountIndex === postEntry.accountIndex || b.owner === owner
-      );
+      const decimals = postEntry.uiTokenAmount?.decimals ?? 6;
+      const divisor  = Math.pow(10, decimals);
+      const postRaw  = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
+      const preRaw   = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
 
-      // token 变化量
-      const postAmt = parseFloat(postEntry.uiTokenAmount?.uiAmount ?? '0');
-      const preAmt  = preEntry ? parseFloat(preEntry.uiTokenAmount?.uiAmount ?? '0') : 0;
-      const tokenDelta = postAmt - preAmt;
+      if (!Number.isFinite(postRaw) || postRaw < 0) continue;
 
+      const tokenDelta  = (postRaw - preRaw) / divisor;
       if (Math.abs(tokenDelta) < 1e-12) continue;
 
-      // SOL 变化量（lamports → SOL）
-      const solDelta = (postBalances[ownerIndex] - preBalances[ownerIndex]) / LAMPORTS;
-
-      // 判断方向
-      // BUY: token↑ SOL↓（用户花 SOL 买 token）
-      // SELL: token↓ SOL↑（用户卖 token 得 SOL）
+      const solDelta = (postBalances[accIdx] - preBalances[accIdx]) / LAMPORTS;
       const isBuy  = tokenDelta > 0 && solDelta < 0;
       const isSell = tokenDelta < 0 && solDelta > 0;
-
       if (!isBuy && !isSell) continue;
 
       const solAmount   = Math.abs(solDelta);
       const tokenAmount = Math.abs(tokenDelta);
-      const priceSol    = tokenAmount > 0 ? solAmount / tokenAmount : 0;
+      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;
 
-      return {
-        ts: Date.now(),
-        signature,
-        tokenAddress,
-        owner,
-        isBuy,
-        solAmount,
-        tokenAmount,
-        priceSol,
-      };
+      // 取 token 变化量最小的条目（用户），排除流动池（变化量极大）
+      if (tokenAmount < bestTokenAmount) {
+        bestTokenAmount = tokenAmount;
+        bestTrade = {
+          ts: Date.now(),
+          signature,
+          tokenAddress,
+          owner: postEntry.owner,
+          isBuy,
+          solAmount,
+          tokenAmount,
+          priceSol: solAmount / tokenAmount,
+        };
+      }
     }
 
-    return null;
+    if (bestTrade) {
+      logger.debug('[HeliusWS] %s %s sol=%.6f tok=%.4f price=%.12f',
+        tokenAddress.slice(0,8), bestTrade.isBuy ? 'BUY' : 'SELL',
+        bestTrade.solAmount, bestTrade.tokenAmount, bestTrade.priceSol);
+    }
+    return bestTrade;
   }
 
   // ── 状态查询 ──────────────────────────────────────────────
