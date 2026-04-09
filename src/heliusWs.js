@@ -293,19 +293,17 @@ class HeliusTradeStream {
         b => b.accountIndex === postEntry.accountIndex || b.owner === owner
       );
 
-      // token 变化量（uiAmount 已含 decimals，直接用）
-      const postUiAmt = postEntry.uiTokenAmount?.uiAmount;
-      const preUiAmt  = preEntry?.uiTokenAmount?.uiAmount;
-      // uiAmount 为 null 时用 amount / 10^decimals 换算
-      const decimals  = postEntry.uiTokenAmount?.decimals ?? 6;
-      const postAmt = postUiAmt != null
-        ? parseFloat(postUiAmt)
-        : (parseFloat(postEntry.uiTokenAmount?.amount ?? '0') / Math.pow(10, decimals));
-      const preAmt = preUiAmt != null
-        ? parseFloat(preUiAmt)
-        : (preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') / Math.pow(10, decimals) : 0);
+      // token 변화량: uiAmount 는 신뢰 불가 (null이거나 잘못된 경우 많음)
+      // amount(raw 정수) / 10^decimals 로 직접 계산
+      const decimals = postEntry.uiTokenAmount?.decimals ?? 6;
+      const divisor  = Math.pow(10, decimals);
 
-      const tokenDelta = postAmt - preAmt;
+      const postRaw = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
+      const preRaw  = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
+
+      if (!Number.isFinite(postRaw) || postRaw < 0) continue;
+
+      const tokenDelta = (postRaw - preRaw) / divisor;
       if (Math.abs(tokenDelta) < 1e-12) continue;
 
       // SOL 变化量（lamports → SOL）
@@ -318,8 +316,8 @@ class HeliusTradeStream {
 
       const solAmount   = Math.abs(solDelta);
       const tokenAmount = Math.abs(tokenDelta);
-      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;  // 너무 작은 거래 스킵
-      const priceSol    = solAmount / tokenAmount;
+      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;
+      const priceSol = solAmount / tokenAmount;
 
       return {
         ts: Date.now(),
