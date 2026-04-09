@@ -264,149 +264,118 @@ class HeliusTradeStream {
     const postTokenBals = meta.postTokenBalances  || [];
     const preBalances   = meta.preBalances  || [];
     const postBalances  = meta.postBalances || [];
+    const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
-    // account keys
-    let accountKeys = [];
-    if (txData?.message?.accountKeys) {
-      accountKeys = txData.message.accountKeys.map(k =>
-        typeof k === 'string' ? k : k.pubkey
-      );
-    }
-
-    // 找该 token 的 post entries
+    // 找该 token 的所有余额变化
     const postEntries = postTokenBals.filter(b => b.mint === tokenAddress);
     const preEntries  = preTokenBals.filter(b => b.mint === tokenAddress);
-
     if (postEntries.length === 0) return null;
 
-<<<<<<< HEAD
-    // 打印原始数据供调试（只打印前几笔）
-    if (this._debugCount == null) this._debugCount = 0;
-    if (this._debugCount < 10) {
-      this._debugCount++;
-      logger.info('[HeliusWS DEBUG] token=%s sig=%s', tokenAddress.slice(0,8), (signature||'').slice(0,12));
-      logger.info('[HeliusWS DEBUG] accountKeys[0..3]=%s', accountKeys.slice(0,3).join(','));
-      logger.info('[HeliusWS DEBUG] preBalances[0..3]=%j', preBalances.slice(0,3));
-      logger.info('[HeliusWS DEBUG] postBalances[0..3]=%j', postBalances.slice(0,3));
-      postEntries.forEach((e,i) => {
-        const pre = preEntries.find(p => p.accountIndex === e.accountIndex);
-        logger.info('[HeliusWS DEBUG] postEntry[%d] accIdx=%d owner=%s amount=%s uiAmount=%s decimals=%s',
-          i, e.accountIndex, (e.owner||'').slice(0,8),
-          e.uiTokenAmount?.amount, e.uiTokenAmount?.uiAmount, e.uiTokenAmount?.decimals);
-        if (pre) logger.info('[HeliusWS DEBUG]  preEntry[%d] accIdx=%d amount=%s uiAmount=%s',
-          i, pre.accountIndex, pre.uiTokenAmount?.amount, pre.uiTokenAmount?.uiAmount);
-      });
+    // ── 方案1：用 WSOL token 账户计算 SOL 金额（最精确）──────────
+    // Raydium/Orca/Meteora 的 swap 通常通过 WSOL 账户而不是原生 SOL
+    // WSOL 账户变化量就是实际的 SOL 成交额，不受手续费等影响
+    const wsolPost = postTokenBals.filter(b => b.mint === WSOL_MINT);
+    const wsolPre  = preTokenBals.filter(b => b.mint === WSOL_MINT);
+
+    let solAmountFromWsol = null;
+    let wsolIsBuy = null;
+    for (const wp of wsolPost) {
+      const wp_pre = wsolPre.find(p => p.accountIndex === wp.accountIndex);
+      const wDec  = wp.uiTokenAmount?.decimals ?? 9;
+      const wPost = parseFloat(wp.uiTokenAmount?.amount ?? '0');
+      const wPre  = wp_pre ? parseFloat(wp_pre.uiTokenAmount?.amount ?? '0') : 0;
+      const wDelta = (wPost - wPre) / Math.pow(10, wDec);
+      if (Math.abs(wDelta) < 1e-9) continue;
+      // WSOL 减少 = 用户花 SOL 买 token (BUY)
+      // WSOL 增加 = 用户卖 token 得 SOL (SELL)
+      solAmountFromWsol = Math.abs(wDelta);
+      wsolIsBuy = wDelta < 0;
+      break;
     }
 
-    // ── 找最小的 token 变化量条目（用户的 ATA，不是流动池）──────
-    // 流动池的 token 变化量极大（整个池子），用户的变化量相对小
-    // 同时对应的 SOL 变化必须方向一致（BUY: token↑SOL↓, SELL: token↓SOL↑）
-    let bestTrade = null;
+    // 找 token 账户变化量最小的（用户 ATA，排除流动池大额变化）
+    let bestEntry = null;
     let bestTokenAmount = Infinity;
-
     for (const postEntry of postEntries) {
-      const accIdx = postEntry.accountIndex;
-      if (accIdx >= preBalances.length || accIdx >= postBalances.length) continue;
-
-      const preEntry = preEntries.find(p => p.accountIndex === accIdx);
-
-      const decimals = postEntry.uiTokenAmount?.decimals ?? 6;
-      const divisor  = Math.pow(10, decimals);
-      const postRaw  = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
-      const preRaw   = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
-
-      if (!Number.isFinite(postRaw) || postRaw < 0) continue;
-
-      const tokenDelta  = (postRaw - preRaw) / divisor;
+      const preEntry = preEntries.find(p => p.accountIndex === postEntry.accountIndex);
+      const dec     = postEntry.uiTokenAmount?.decimals ?? 6;
+      const postRaw = parseFloat(postEntry.uiTokenAmount?.amount ?? '0');
+      const preRaw  = preEntry ? parseFloat(preEntry.uiTokenAmount?.amount ?? '0') : 0;
+      if (!Number.isFinite(postRaw)) continue;
+      const tokenDelta = (postRaw - preRaw) / Math.pow(10, dec);
       if (Math.abs(tokenDelta) < 1e-12) continue;
-
-      const solDelta = (postBalances[accIdx] - preBalances[accIdx]) / LAMPORTS;
-      const isBuy  = tokenDelta > 0 && solDelta < 0;
-      const isSell = tokenDelta < 0 && solDelta > 0;
-      if (!isBuy && !isSell) continue;
-
-      const solAmount   = Math.abs(solDelta);
       const tokenAmount = Math.abs(tokenDelta);
-      if (solAmount < 1e-9 || tokenAmount < 1e-12) continue;
-
-      // 取 token 变化量最小的条目（用户），排除流动池（变化量极大）
       if (tokenAmount < bestTokenAmount) {
         bestTokenAmount = tokenAmount;
-        bestTrade = {
-          ts: Date.now(),
-          signature,
-          tokenAddress,
-          owner: postEntry.owner,
-          isBuy,
-          solAmount,
-          tokenAmount,
-          priceSol: solAmount / tokenAmount,
-        };
+        bestEntry = { postEntry, preEntry, tokenDelta, tokenAmount, dec };
+      }
+    }
+    if (!bestEntry) return null;
+
+    const { tokenDelta, tokenAmount } = bestEntry;
+    let isBuy, solAmount;
+
+    if (solAmountFromWsol !== null) {
+      // WSOL 方案：直接用 WSOL 变化量
+      solAmount = solAmountFromWsol;
+      isBuy     = wsolIsBuy;
+      // 验证方向一致性
+      if ((isBuy && tokenDelta <= 0) || (!isBuy && tokenDelta >= 0)) {
+        // 方向不一致，可能是 WSOL 账户属于 pool，用 native SOL 方案
+        solAmount = null;
       }
     }
 
-    if (bestTrade) {
-      logger.debug('[HeliusWS] %s %s sol=%.6f tok=%.4f price=%.12f',
-        tokenAddress.slice(0,8), bestTrade.isBuy ? 'BUY' : 'SELL',
-        bestTrade.solAmount, bestTrade.tokenAmount, bestTrade.priceSol);
+    if (solAmount === null || solAmount === undefined) {
+      // ── 方案2：用 native SOL 余额变化 ──────────────────────────
+      // 遍历所有账户，找 SOL 变化与 token 变化方向一致的账户
+      let accountKeys = [];
+      if (txData?.message?.accountKeys) {
+        accountKeys = txData.message.accountKeys.map(k =>
+          typeof k === 'string' ? k : k.pubkey
+        );
+      }
+      const tokenOwner = bestEntry.postEntry.owner;
+      const ownerIdx   = accountKeys.indexOf(tokenOwner);
+      if (ownerIdx >= 0 && ownerIdx < preBalances.length) {
+        const nativeDelta = (postBalances[ownerIdx] - preBalances[ownerIdx]) / LAMPORTS;
+        isBuy     = tokenDelta > 0 && nativeDelta < 0;
+        const isSell2 = tokenDelta < 0 && nativeDelta > 0;
+        if (isBuy || isSell2) {
+          solAmount = Math.abs(nativeDelta);
+          if (!isBuy) isBuy = false;
+        }
+      }
+      // 如果还是找不到，尝试 accountKeys[0]（fee payer / signer）
+      if (solAmount === undefined) {
+        const nativeDelta = (postBalances[0] - preBalances[0]) / LAMPORTS;
+        isBuy     = tokenDelta > 0 && nativeDelta < 0;
+        const isSell2 = tokenDelta < 0 && nativeDelta > 0;
+        if (isBuy || isSell2) {
+          solAmount = Math.abs(nativeDelta);
+          if (!isBuy) isBuy = false;
+        }
+      }
     }
-    return bestTrade;
-=======
-    // signer（交易发起人）是 accountKeys[0]
-    // 我们只关心 signer 的 token 变化，忽略 pool/AMM 账户的变化
-    const signerKey = accountKeys[0];
-    const signerIndex = 0;  // signer 永远是第0个
 
-    // 在 postTokenBalances 里找 signer 持有的 token 条目
-    // signer 的 ATA（关联代币账户）的 owner 就是 signer
-    const signerPost = postEntries.find(b => b.owner === signerKey);
-    const signerPre  = preEntries.find(b => b.owner === signerKey);
-
-    // 如果 signer 没有该 token 的余额变化，说明这不是用户 swap（可能是 LP 操作等），跳过
-    if (!signerPost) return null;
-
-    // 计算 signer 的 token 变化（raw integer / 10^decimals）
-    const decimals = signerPost.uiTokenAmount?.decimals ?? 6;
-    const divisor  = Math.pow(10, decimals);
-
-    const postRaw = parseFloat(signerPost.uiTokenAmount?.amount ?? '0');
-    const preRaw  = signerPre ? parseFloat(signerPre.uiTokenAmount?.amount ?? '0') : 0;
-
-    if (!Number.isFinite(postRaw)) return null;
-
-    const tokenDelta = (postRaw - preRaw) / divisor;
-    if (Math.abs(tokenDelta) < 1e-12) return null;
-
-    // signer 的 SOL 变化（lamports → SOL）
-    if (signerIndex >= preBalances.length || signerIndex >= postBalances.length) return null;
-    const solDelta = (postBalances[signerIndex] - preBalances[signerIndex]) / LAMPORTS;
-
-    // BUY: signer token↑ SOL↓  /  SELL: signer token↓ SOL↑
-    const isBuy  = tokenDelta > 0 && solDelta < 0;
-    const isSell = tokenDelta < 0 && solDelta > 0;
-    if (!isBuy && !isSell) return null;
-
-    const solAmount   = Math.abs(solDelta);
-    const tokenAmount = Math.abs(tokenDelta);
-    if (solAmount < 1e-9 || tokenAmount < 1e-12) return null;
+    if (!solAmount || solAmount < 1e-9) return null;
+    if (tokenAmount < 1e-12) return null;
 
     const priceSol = solAmount / tokenAmount;
-
-    logger.debug('[HeliusWS] %s %s solAmount=%.6f tokenAmount=%.4f priceSol=%.12f',
+    logger.debug('[HeliusWS] %s %s sol=%s tok=%s price=%s',
       tokenAddress.slice(0,8), isBuy ? 'BUY' : 'SELL',
-      solAmount, tokenAmount, priceSol);
+      solAmount.toExponential(4), tokenAmount.toExponential(4), priceSol.toExponential(4));
 
     return {
       ts: Date.now(),
       signature,
       tokenAddress,
-      owner: signerKey,
+      owner: bestEntry.postEntry.owner,
       isBuy,
       solAmount,
       tokenAmount,
       priceSol,
     };
->>>>>>> bb9895223bce2a0b48a2debe8759f414effa1526
   }
 
   // ── 状态查询 ──────────────────────────────────────────────

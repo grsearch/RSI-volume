@@ -391,10 +391,10 @@ class TokenMonitor extends EventEmitter {
   async _doBuy(state, price, reason, rsi, volume) {
     // 가격 유효성 검사
     if (!price || price <= 0 || !Number.isFinite(price)) {
-      logger.warn('[Monitor] ⚠️ %s 买入价格无效(%.10f)，跳过', state.symbol, price);
+      logger.warn('[Monitor] ⚠️ %s 买入价格无效(%s)，跳过', state.symbol, price);
       return;
     }
-    logger.info('[Monitor] 🟢 BUY %s @ %.10f | %s | DRY_RUN=%s', state.symbol, price, reason, DRY_RUN);
+    logger.info('[Monitor] 🟢 BUY %s @ %s | %s | DRY_RUN=%s', state.symbol, price.toExponential(6), reason, DRY_RUN);
     state.inPosition = true;
 
     if (DRY_RUN) {
@@ -416,7 +416,7 @@ class TokenMonitor extends EventEmitter {
         txid: state.position.buyTxid, solIn: TRADE_SOL, dryRun: true,
         rsi, buyVol: volume?.buyVol ?? 0, sellVol: volume?.sellVol ?? 0 });
       this._createTradeRecord(state);
-      logger.info('[Monitor] ✅ DRY_RUN BUY 模拟成功 %s @ %.8f  solIn=%.4f', state.symbol, price, TRADE_SOL);
+      logger.info('[Monitor] ✅ DRY_RUN BUY 模拟成功 %s @ %s  solIn=%s', state.symbol, price.toExponential(6), TRADE_SOL);
     } else {
       try {
         const result = await trader.buy(state.address, state.symbol);
@@ -487,8 +487,8 @@ class TokenMonitor extends EventEmitter {
         entrySellVol: state.position?.entrySellVol ?? 0 });
       this._finalizeTradeRecord(state, reason, solOut, pnlPct, currentPrice);
 
-      logger.info('[Monitor] ✅ DRY_RUN SELL %s  solIn=%.4f  solOut=%.4f  pnl=%+.4f SOL (%+.1f%%)',
-        state.symbol, solIn, solOut, pnlSol, pnlPct);
+      logger.info('[Monitor] ✅ DRY_RUN SELL %s  solIn=%s  solOut=%s  pnl=%s SOL (%s%)',
+        state.symbol, solIn.toFixed(4), solOut.toFixed(4), pnlSol.toFixed(4), pnlPct.toFixed(1));
     } else {
       let realtimeSellPrice = state.tokenPriceSol
         ?? (state.ticks.length > 0 ? state.ticks[state.ticks.length - 1].price : 0);
