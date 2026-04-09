@@ -102,7 +102,6 @@ class TokenMonitor extends EventEmitter {
       ticks         : [],
       latestFdv          : null,
       latestLp           : null,
-      lastChainPriceSol  : null,  // Helius 最新链上SOL价格
       inPosition    : false,
       position      : null,
       tradeCount    : 0,
@@ -198,20 +197,23 @@ class TokenMonitor extends EventEmitter {
       source   : 'helius',
     });
 
-    // ── 链上实时止损（纯SOL计价，毫秒级响应）────────────────────
-    // 直接用链上 SOL 价格，不依赖 Birdeye USD，响应最快
-    if (trade.priceSol > 0) {
-      state.lastChainPriceSol = trade.priceSol;  // 记录最新链上SOL价格
-
-      if (state.inPosition && !state.exitSent && state.position?.entryPriceSol) {
-        const pnl = (trade.priceSol - state.position.entryPriceSol)
-                  / state.position.entryPriceSol * 100;
-
+    // ── 链上成交触发止损检查（毫秒级响应）─────────────────────
+    // 每次收到该 token 的链上成交时，立即用最新 Birdeye USD 价格检查止损
+    // 避免等待下一次 1秒轮询，大幅提升止损响应速度
+    if (trade.priceSol > 0 && state.inPosition && !state.exitSent
+        && state.position?.entryPriceUsd) {
+      // 用 state.ticks 里最新的 USD 价格（Birdeye 最后一次轮询的价格）
+      const latestUsd = state.ticks.length > 0
+        ? state.ticks[state.ticks.length - 1].price
+        : null;
+      if (latestUsd && latestUsd > 0) {
+        const pnl = (latestUsd - state.position.entryPriceUsd)
+                  / state.position.entryPriceUsd * 100;
         if (pnl <= STOP_LOSS_PCT) {
-          logger.warn('[Monitor] ⚡ %s 链上SOL止损触发 %.10f→%.10f pnl=%.1f%%',
-            state.symbol, state.position.entryPriceSol, trade.priceSol, pnl);
+          logger.warn('[Monitor] ⚡ %s 链上触发止损 USD:%.8f→%.8f pnl=%.1f%%',
+            state.symbol, state.position.entryPriceUsd, latestUsd, pnl);
           setImmediate(() => this._doSellExit(state,
-            `STOP_LOSS_SOL(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`));
+            `STOP_LOSS(${pnl.toFixed(1)}%≤${STOP_LOSS_PCT}%)`));
         }
       }
     }
@@ -407,7 +409,6 @@ class TokenMonitor extends EventEmitter {
       const simulatedTokens = Math.floor(TRADE_SOL / price * 1e9); // 模拟 token 数量
       state.position = {
         entryPriceUsd : price,
-        entryPriceSol : state.lastChainPriceSol ?? null,  // 链上SOL价格，用于实时止损
         amountToken   : simulatedTokens,
         solIn         : TRADE_SOL,
         buyTxid       : `DRY_${Date.now()}`,
@@ -427,7 +428,6 @@ class TokenMonitor extends EventEmitter {
         const result = await trader.buy(state.address, state.symbol);
         state.position = {
           entryPriceUsd : price,
-          entryPriceSol : state.lastChainPriceSol ?? null,
           amountToken   : result.amountOut,
           solIn         : result.solIn,
           buyTxid       : result.txid,
